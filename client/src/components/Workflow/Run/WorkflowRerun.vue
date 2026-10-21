@@ -7,12 +7,17 @@ import { useInvocationStore } from "@/stores/invocationStore";
 import { errorMessageAsString } from "@/utils/simple-error.js";
 
 import WorkflowRun from "./WorkflowRun.vue";
+import WorkflowStepRerun from "./WorkflowStepRerun.vue";
 import GAlert from "@/components/BaseComponents/GAlert.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
 
 const props = defineProps<{
     invocationId: string;
+    /** Order index of the one step to edit; without it the whole-workflow rerun form is shown */
+    step?: string;
 }>();
+
+const stepIndex = computed(() => (props.step === undefined || props.step === "" ? undefined : Number(props.step)));
 
 const historyStore = useHistoryStore();
 const invocationStore = useInvocationStore();
@@ -49,6 +54,11 @@ watch(
     <GAlert v-if="requestError" variant="danger">
         Unable to load workflow rerun data: {{ errorMessageAsString(requestError) }}
     </GAlert>
+    <WorkflowStepRerun
+        v-else-if="ready && requestData && stepIndex !== undefined"
+        :invocation-id="props.invocationId"
+        :step-index="stepIndex"
+        :request="requestData" />
     <WorkflowRun
         v-else-if="ready && requestData"
         :workflow-id="requestData.workflow_id"

@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { faArrowCircleLeft, faArrowCircleRight, faArrowDown, faEye, faTimes } from "@fortawesome/free-solid-svg-icons";
+import {
+    faArrowCircleLeft,
+    faArrowCircleRight,
+    faArrowDown,
+    faEye,
+    faRedo,
+    faTimes,
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { until } from "@vueuse/core";
 import { BCard, BCardBody, BCardHeader } from "bootstrap-vue";
 import { storeToRefs } from "pinia";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 
 import type { StepJobSummary, WorkflowInvocationElementView } from "@/api/invocations";
 import type { StoredWorkflowDetailed } from "@/api/workflows";
@@ -62,6 +70,7 @@ const detailedViewEnabled = ref(false);
 const workflowGraph = ref<InstanceType<typeof WorkflowGraph> | null>(null);
 
 const { datatypesMapper } = useDatatypesMapper();
+const router = useRouter();
 
 const workflowId = computed(() => props.workflow?.id);
 const workflowVersion = computed(() => props.workflow?.version);
@@ -118,6 +127,15 @@ const initialPosition = computed(() => ({
 }));
 
 const activeStep = computed(() => (activeNodeId.value !== null ? props.workflow.steps[activeNodeId.value] : undefined));
+
+const canRerunActiveStep = computed(() => activeStep.value?.type === "tool" && props.isTerminal);
+
+function rerunActiveStep() {
+    router.push({
+        path: "/workflows/rerun",
+        query: { invocation_id: props.invocation.id, step: String(activeNodeId.value) },
+    });
+}
 
 /** Updates and loads the invocation graph */
 async function loadGraph() {
@@ -244,6 +262,18 @@ function toggleDetailedView() {
                         :graph-step="steps[activeNodeId]"
                         :invocation-step="props.invocation.steps[activeNodeId]" />
                     <div class="d-flex flex-gapx-1">
+                        <GButton
+                            v-if="canRerunActiveStep"
+                            title="Edit this step's parameters and rerun the workflow, reusing unchanged jobs"
+                            data-description="invocation graph edit and rerun step button"
+                            class="text-nowrap"
+                            size="small"
+                            color="blue"
+                            outline
+                            @click="rerunActiveStep()">
+                            <FontAwesomeIcon :icon="faRedo" />
+                            Edit parameters and rerun
+                        </GButton>
                         <GButton title="Scroll to Step" size="small" transparent @click="scrollStepToView()">
                             <FontAwesomeIcon :icon="faArrowDown" />
                         </GButton>
