@@ -883,6 +883,7 @@ export function getRouter(Galaxy) {
                         redirect: redirectAnon(),
                         props: (route) => ({
                             invocationId: route.query.invocation_id,
+                            step: route.query.step,
                         }),
                     },
                     {
