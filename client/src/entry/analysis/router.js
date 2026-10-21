@@ -76,6 +76,7 @@ import PageEditor from "@/components/PageEditor/PageEditor.vue";
 import UploadMethodView from "@/components/Panels/Upload/UploadMethodView.vue";
 import UploadPage from "@/components/Panels/Upload/UploadPage.vue";
 import UploadProgress from "@/components/Panels/Upload/UploadProgress.vue";
+import ProjectsView from "@/components/Projects/ProjectsView.vue";
 import Sharing from "@/components/Sharing/SharingPage.vue";
 import ToolReport from "@/components/Tool/ToolReport.vue";
 import ToolSuccess from "@/components/Tool/ToolSuccess.vue";
@@ -837,6 +838,14 @@ export function getRouter(Galaxy) {
                             isFullPage: true,
                             success: Boolean(route.query.success),
                         }),
+                    },
+                    {
+                        path: "projects",
+                        component: ProjectsView,
+                        props: (route) => ({
+                            path: route.query.path,
+                        }),
+                        redirect: redirectAnon(),
                     },
                     {
                         path: "workflows/list_curated",
