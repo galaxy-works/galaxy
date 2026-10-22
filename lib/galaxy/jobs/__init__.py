@@ -1336,6 +1336,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 param=params,
                 param_dump=json_internal,
                 require_name_match=False,
+                preferred_job_ids=self._rerun_source_job_ids(job),
             )
             if job_to_copy and isinstance(job_to_copy, Job):
                 job.copy_from_job(job_to_copy, copy_outputs=True)
@@ -1358,6 +1359,12 @@ class MinimalJobWrapper(HasResourceParameters):
         self.sa_session.add(job)
         self.sa_session.commit()
         log.debug(f"Job wrapper for Job [{job.id}] prepared {prepare_timer}")
+
+    def _rerun_source_job_ids(self, job: Job) -> frozenset[int] | None:
+        invocation_step = job.effective_workflow_invocation_step
+        if invocation_step is None:
+            return None
+        return invocation_step.workflow_invocation.rerun_source_job_ids()
 
     def _setup_working_directory(self, job=None):
         if job is None:

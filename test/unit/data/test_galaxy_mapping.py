@@ -401,6 +401,86 @@ class TestMappings(BaseModelTestCase):
         session.flush(model.GalaxySession())
         assert "id" not in inspect(galaxy_model_object_new).unloaded
 
+    def test_invocation_rerun_source_job_ids(self):
+        user = model.User(email=random_email(), password="password")
+        child_step = model.WorkflowStep()
+        child_step.order_index = 0
+        child_step.type = "tool"
+        child_workflow = _workflow_from_steps(user, [child_step])
+        self.persist(child_workflow)
+
+        tool_step = model.WorkflowStep()
+        tool_step.order_index = 0
+        tool_step.type = "tool"
+        mapped_step = model.WorkflowStep()
+        mapped_step.order_index = 1
+        mapped_step.type = "tool"
+        subworkflow_step = model.WorkflowStep()
+        subworkflow_step.order_index = 2
+        subworkflow_step.type = "subworkflow"
+        add_object_to_object_session(subworkflow_step, child_workflow)
+        subworkflow_step.subworkflow = child_workflow
+        workflow = _workflow_from_steps(user, [tool_step, mapped_step, subworkflow_step])
+        self.persist(workflow)
+
+        def new_job(copied_from=None):
+            job = model.Job()
+            job.tool_id = "cat1"
+            job.copied_from_job_id = copied_from.id if copied_from else None
+            self.persist(job)
+            return job
+
+        original_job = new_job()
+        copied_job = new_job(copied_from=original_job)
+        mapped_jobs = [new_job(), new_job()]
+        subworkflow_job = new_job()
+        unrelated_job = new_job()
+
+        def invocation_step(invocation, step, job=None, implicit_collection_jobs=None):
+            invocation_step = model.WorkflowInvocationStep()
+            add_object_to_object_session(invocation_step, invocation)
+            invocation_step.workflow_invocation = invocation
+            invocation_step.workflow_step = step
+            invocation_step.job = job
+            invocation_step.implicit_collection_jobs = implicit_collection_jobs
+
+        source = _invocation_for_workflow(user, workflow)
+        add_object_to_object_session(source, workflow)
+        invocation_step(source, tool_step, job=copied_job)
+        icj = model.ImplicitCollectionJobs()
+        for order_index, job in enumerate(mapped_jobs):
+            icj_assoc = model.ImplicitCollectionJobsJobAssociation()
+            icj_assoc.implicit_collection_jobs = icj
+            icj_assoc.job = job
+            icj_assoc.order_index = order_index
+            add_object_to_object_session(icj_assoc, job)
+        invocation_step(source, mapped_step, implicit_collection_jobs=icj)
+        source_subworkflow_invocation = model.WorkflowInvocation()
+        source.attach_subworkflow_invocation_for_step(subworkflow_step, source_subworkflow_invocation)
+        invocation_step(source_subworkflow_invocation, child_step, job=subworkflow_job)
+        self.persist(source)
+
+        rerun = _invocation_for_workflow(user, workflow)
+        add_object_to_object_session(rerun, workflow)
+        rerun.input_parameters.append(
+            model.WorkflowRequestInputParameter(
+                name="rerun_of_invocation_id",
+                value=str(source.id),
+                type=model.WorkflowRequestInputParameter.types.META_PARAMETERS,
+            )
+        )
+        rerun_subworkflow_invocation = model.WorkflowInvocation()
+        rerun.attach_subworkflow_invocation_for_step(subworkflow_step, rerun_subworkflow_invocation)
+        self.persist(rerun)
+
+        expected = {original_job.id, *(job.id for job in mapped_jobs), subworkflow_job.id}
+        assert unrelated_job.id not in expected
+        assert source.original_job_ids() == expected
+        assert rerun.rerun_source_job_ids() == expected
+        # Only the root invocation records the rerun source, a subworkflow invocation finds it there.
+        assert rerun_subworkflow_invocation.rerun_source_job_ids() == expected
+        assert source.rerun_source_job_ids() is None
+
     def test_workflows(self):
         user = model.User(email=random_email(), password="password")
 
