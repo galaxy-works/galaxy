@@ -43,7 +43,7 @@ describe("InvocationRerunOrigin", () => {
         const line = wrapper.find("[data-description='invocation rerun origin']");
         expect(line.exists()).toBe(true);
         expect(line.text()).toContain("Rerun of invocation");
-        expect(line.text()).toContain("step 2 (Cut columns)");
+        expect(line.text()).toContain("source-invocation-id, step 2 (Cut columns)");
         const link = wrapper.find("[data-description='invocation rerun origin link']");
         expect(link.attributes("to")).toBe("/workflows/invocations/source-invocation-id");
     });

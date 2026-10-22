@@ -27,6 +27,7 @@ import WorkflowInvocationSteps from "../Workflow/Invocation/Graph/WorkflowInvoca
 import InvocationReport from "../Workflow/InvocationReport.vue";
 import WorkflowAnnotation from "../Workflow/WorkflowAnnotation.vue";
 import WorkflowNavigationTitle from "../Workflow/WorkflowNavigationTitle.vue";
+import InvocationRerunOrigin from "./InvocationRerunOrigin.vue";
 import TabsDisabledAlert from "./TabsDisabledAlert.vue";
 import WorkflowInvocationExportOptions from "./WorkflowInvocationExportOptions.vue";
 import WorkflowInvocationFeedback from "./WorkflowInvocationFeedback.vue";
@@ -384,6 +385,8 @@ async function onCancel() {
                 </WorkflowAnnotation>
             </template>
         </WorkflowNavigationTitle>
+
+        <InvocationRerunOrigin v-if="props.isFullPage" :invocation="invocation" />
 
         <BNav v-if="props.isFullPage" pills class="mb-2 mt-2 p-2 bg-light border-bottom">
             <BNavItem title="Overview" :active="onOverviewTab" :to="`/workflows/invocations/${props.invocationId}`">
