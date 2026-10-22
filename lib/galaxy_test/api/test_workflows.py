@@ -9207,6 +9207,55 @@ steps:
             assert job["outputs"]["out_file1"]["id"] in new_history_contents, label
 
     @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_of_a_rerun_reuses_original_jobs(self, history_id: str):
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}
+        )
+        third_invocation_id = self._step_rerun_from_request(
+            second_invocation_id, workflow_id, edited_step, {"num_lines": "3"}
+        )
+
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        third_jobs = self._step_rerun_single_jobs(third_invocation_id)
+        # Copied jobs point at their originals, so the third invocation's unchanged steps should
+        # still trace back to the first invocation's jobs.
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            third_jobs,
+            reused={"first_cat", "second_cat", "sibling_lines"},
+            recomputed={"random_lines", "downstream_cat"},
+        )
+        assert json.loads(third_jobs["random_lines"]["params"]["num_lines"]) == "3"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="JobSearch.by_tool_input takes the newest equivalent job, so a newer job outside the source invocation breaks the reuse chain downstream of it.",
+    )
+    @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_with_newer_equivalent_job_outside_invocation(self, history_id: str):
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        # Run first_cat's tool by hand on the same input: an equivalent job, newer than the
+        # invocation's, whose output was never fed to second_cat or sibling_lines.
+        the_input = first_jobs["first_cat"]["inputs"]["input1"]
+        run = self.dataset_populator.run_tool("cat1", {"input1": the_input}, history_id)
+        self.dataset_populator.wait_for_job(run["jobs"][0]["id"], assert_ok=True)
+
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}
+        )
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            second_jobs,
+            reused={"first_cat", "second_cat", "sibling_lines"},
+            recomputed={"random_lines", "downstream_cat"},
+        )
+
+    @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
     def test_workflow_rerun_with_cached_job_consumes_implicit_hdca(self, history_id: str):
         workflow = """
