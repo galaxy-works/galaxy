@@ -91,6 +91,13 @@ class WorkflowRunConfig:
     :param param_map: Override step parameters - should be dict with step id keys and
                       tool param name-value dicts as values.
     :type param_map: dict
+
+    :param rerun_of_invocation_id: Decoded id of the invocation this one reruns, its jobs
+                                   are preferred when looking up cached jobs.
+    :type rerun_of_invocation_id: int
+
+    :param rerun_step_index: Order index of the step edited for the rerun (provenance only).
+    :type rerun_step_index: int
     """
 
     def __init__(
@@ -109,6 +116,8 @@ class WorkflowRunConfig:
         preferred_intermediate_object_store_id: str | None = None,
         effective_outputs: list[EffectiveOutput] | None = None,
         on_complete: list[dict[str, Any]] | None = None,
+        rerun_of_invocation_id: int | None = None,
+        rerun_step_index: int | None = None,
     ) -> None:
         self.target_history = target_history
         self.replacement_dict = replacement_dict or {}
@@ -124,6 +133,8 @@ class WorkflowRunConfig:
         self.preferred_intermediate_object_store_id = preferred_intermediate_object_store_id
         self.effective_outputs = effective_outputs
         self.on_complete = on_complete
+        self.rerun_of_invocation_id = rerun_of_invocation_id
+        self.rerun_step_index = rerun_step_index
 
 
 def _normalize_inputs(
@@ -571,6 +582,8 @@ def build_workflow_run_configs(
                 preferred_outputs_object_store_id=preferred_outputs_object_store_id,
                 preferred_intermediate_object_store_id=preferred_intermediate_object_store_id,
                 on_complete=payload.get("on_complete"),
+                rerun_of_invocation_id=payload.get("rerun_of_invocation_id"),
+                rerun_step_index=payload.get("rerun_step_index"),
             )
         )
 
@@ -684,6 +697,10 @@ def workflow_run_config_to_request(
         value = getattr(run_config, param)
         if value:
             add_parameter(param, value, param_types.META_PARAMETERS)
+    for param in ["rerun_of_invocation_id", "rerun_step_index"]:
+        value = getattr(run_config, param)
+        if value is not None:
+            add_parameter(param, str(value), param_types.META_PARAMETERS)
     if run_config.effective_outputs is not None:
         # empty list needs to come through here...
         add_parameter("effective_outputs", json.dumps(run_config.effective_outputs), param_types.META_PARAMETERS)
@@ -708,6 +725,8 @@ def workflow_request_to_run_config(
     preferred_outputs_object_store_id = None
     preferred_intermediate_object_store_id = None
     effective_outputs = None
+    rerun_of_invocation_id = None
+    rerun_step_index = None
     for parameter in workflow_invocation.input_parameters:
         parameter_type = parameter.type
 
@@ -726,6 +745,10 @@ def workflow_request_to_run_config(
                 preferred_intermediate_object_store_id = parameter.value
             if parameter.name == "effective_outputs":
                 effective_outputs = json.loads(parameter.value)
+            if parameter.name == "rerun_of_invocation_id":
+                rerun_of_invocation_id = int(parameter.value)
+            if parameter.name == "rerun_step_index":
+                rerun_step_index = int(parameter.value)
         elif parameter_type == param_types.RESOURCE_PARAMETERS:
             resource_params[parameter.name] = parameter.value
         elif parameter_type == param_types.STEP_PARAMETERS:
@@ -758,5 +781,7 @@ def workflow_request_to_run_config(
         preferred_outputs_object_store_id=preferred_outputs_object_store_id,
         preferred_intermediate_object_store_id=preferred_intermediate_object_store_id,
         effective_outputs=effective_outputs,
+        rerun_of_invocation_id=rerun_of_invocation_id,
+        rerun_step_index=rerun_step_index,
     )
     return workflow_run_config

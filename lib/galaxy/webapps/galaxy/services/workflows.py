@@ -350,6 +350,12 @@ class WorkflowsService(ServiceBase):
             raise exceptions.RequestParameterInvalidException(
                 f"Unknown workflow scheduler '{workflow_scheduler_id}' specified."
             )
+        if payload.rerun_of_invocation_id is not None:
+            # Preferring the source's jobs only reorders cache candidates the user could already
+            # reuse, so read access to the source invocation is enough.
+            self._workflows_manager.get_invocation(
+                trans, payload.rerun_of_invocation_id, check_ownership=False, check_accessible=True
+            )
         run_configs = build_workflow_run_configs(trans, workflow, payload.model_dump(exclude_unset=True))
         is_batch = payload.batch
         if not is_batch and len(run_configs) != 1:
