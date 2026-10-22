@@ -1219,6 +1219,9 @@ class ModelImportStore(metaclass=abc.ABCMeta):
 
             input_parameters = []
             for input_parameter_attrs in invocation_attrs["input_parameters"]:
+                if input_parameter_attrs["name"] == "rerun_of_invocation_id":
+                    # An id from the exporting database; re-added below if that invocation is in the archive.
+                    continue
                 input_parameter = model.WorkflowRequestInputParameter()
                 input_parameter.value = input_parameter_attrs["value"]
                 input_parameter.name = input_parameter_attrs["name"]
@@ -1348,6 +1351,26 @@ class ModelImportStore(metaclass=abc.ABCMeta):
                 assoc.subworkflow_invocation_id = subworkflow_invocation.id
                 assoc.workflow_step = workflow_step
                 self._session_add(assoc)
+
+        # Third pass: point reruns at the imported copy of their source invocation, now that it has an id.
+        rerun_links = []
+        for invocation_attrs in invocations_attrs:
+            source_link = invocation_attrs.get("rerun_of_invocation")
+            if not source_link or object_key not in invocation_attrs:
+                continue
+            rerun = object_import_tracker.invocations_by_key.get(invocation_attrs[object_key])
+            source = object_import_tracker.invocations_by_key.get(source_link.get(object_key))
+            if rerun is not None and source is not None:
+                rerun_links.append((rerun, source))
+        if rerun_links:
+            self._flush()
+        for rerun, source in rerun_links:
+            input_parameter = model.WorkflowRequestInputParameter()
+            input_parameter.name = "rerun_of_invocation_id"
+            input_parameter.value = str(source.id)
+            input_parameter.type = model.WorkflowRequestInputParameter.types.META_PARAMETERS
+            input_parameter.workflow_invocation = rerun
+            self._session_add(input_parameter)
 
     def _import_jobs(self, object_import_tracker: "ObjectImportTracker", history: model.History | None) -> None:
         self._flush()
