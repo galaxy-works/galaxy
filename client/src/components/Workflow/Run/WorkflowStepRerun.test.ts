@@ -4,12 +4,17 @@ import flushPromises from "flush-promises";
 import { createPinia } from "pinia";
 import { describe, expect, it, vi } from "vitest";
 
-import { getRunData } from "./services";
+import { getRunData, invokeWorkflow } from "./services";
 
 import WorkflowStepRerun from "./WorkflowStepRerun.vue";
+import GButton from "@/components/BaseComponents/GButton.vue";
 import WorkflowRunDefaultStep from "@/components/Workflow/Run/WorkflowRunDefaultStep.vue";
 
 vi.mock("./services", () => ({ getRunData: vi.fn(), invokeWorkflow: vi.fn() }));
+vi.mock("vue-router", async (importOriginal) => ({
+    ...((await importOriginal()) as object),
+    useRouter: () => ({ push: vi.fn() }),
+}));
 
 const localVue = getLocalVue();
 
@@ -56,5 +61,20 @@ describe("WorkflowStepRerun", () => {
         const wrapper = await mountStepRerun(runData([{ name: "delimiter", type: "text", value: "," }]));
         expect(wrapper.find("[data-description='step rerun gate']").exists()).toBe(false);
         expect(wrapper.findComponent(WorkflowRunDefaultStep).exists()).toBe(true);
+    });
+
+    it("names the source invocation and the edited step in the submit payload", async () => {
+        const wrapper = await mountStepRerun(runData([{ name: "delimiter", type: "text", value: "," }]));
+        vi.mocked(invokeWorkflow).mockResolvedValue({ id: "new-invocation-id" });
+        wrapper.findComponent(GButton).vm.$emit("click");
+        await flushPromises();
+        expect(invokeWorkflow).toHaveBeenCalledTimes(1);
+        const [workflowId, payload] = vi.mocked(invokeWorkflow).mock.calls[0]!;
+        expect(workflowId).toBe("workflow-id");
+        expect(payload).toMatchObject({
+            rerun_of_invocation_id: "invocation-id",
+            rerun_step_index: 0,
+            use_cached_job: true,
+        });
     });
 });
