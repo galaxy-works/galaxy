@@ -6,11 +6,12 @@ import { useRouter } from "vue-router";
 
 import type { WorkflowInvocationRequest } from "@/api/invocations";
 import type { FormData } from "@/components/Form/composables/useFormState";
+import { useInvocationStore } from "@/stores/invocationStore";
 import { errorMessageAsString } from "@/utils/simple-error";
 
 import { WorkflowRunModel } from "./model";
 import { getRunData, invokeWorkflow } from "./services";
-import { applyStepOverrides, buildStepRerunPayload, type StepParameters } from "./stepRerun";
+import { applyStepOverrides, buildStepRerunPayload, evaluateStepRerunGates, type StepParameters } from "./stepRerun";
 
 import GAlert from "@/components/BaseComponents/GAlert.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
@@ -30,9 +31,12 @@ interface Props {
 const props = defineProps<Props>();
 
 const router = useRouter();
+const invocationStore = useInvocationStore();
 
 const loading = ref(true);
 const loadError = ref("");
+/** Why this step cannot be edited and rerun on its own, if it cannot */
+const gateReason = ref("");
 const submitError = ref("");
 const submitting = ref(false);
 const model = ref<WorkflowRunModel>();
@@ -48,22 +52,32 @@ const validationScrollTo = ref<[string, string] | []>([]);
 const stepKey = computed(() => String(props.stepIndex));
 const stepTitle = computed(() => step.value?.step_label || step.value?.step_name || `Step ${props.stepIndex + 1}`);
 const invocationLink = computed(() => `/workflows/invocations/${props.invocationId}`);
+const fullRerunLink = computed(() => `/workflows/rerun?invocation_id=${props.invocationId}`);
 
 async function load() {
     loading.value = true;
     loadError.value = "";
+    gateReason.value = "";
     try {
-        const runData = await getRunData(props.request.workflow_id, undefined, true);
+        const [runData, invocation, jobsSummary] = await Promise.all([
+            getRunData(props.request.workflow_id, undefined, true),
+            invocationStore.fetchInvocationById({ id: props.invocationId }),
+            invocationStore.fetchInvocationJobsSummaryForId({ id: props.invocationId }),
+        ]);
+        if (!invocation) {
+            const invocationError = invocationStore.getInvocationLoadError(props.invocationId);
+            loadError.value = invocationError
+                ? errorMessageAsString(invocationError)
+                : `Unable to load invocation ${props.invocationId}.`;
+            return;
+        }
         const runModel = new WorkflowRunModel(runData);
+        const gate = evaluateStepRerunGates(runModel, runData, props.stepIndex, invocation, jobsSummary);
+        if (!gate.ok) {
+            gateReason.value = gate.reason;
+            return;
+        }
         const runStep = runModel.steps[props.stepIndex];
-        if (!runStep) {
-            loadError.value = `This workflow has no step with index ${props.stepIndex}.`;
-            return;
-        }
-        if (runStep.step_type !== "tool") {
-            loadError.value = `Only tool steps can be edited and rerun; step ${props.stepIndex + 1} is a ${runStep.step_type} step.`;
-            return;
-        }
         const overrides = (props.request.parameters?.[stepKey.value] ?? {}) as StepParameters;
         const { placed, unplaced } = applyStepOverrides(runStep.inputs, overrides);
         runtimeOverrides.value = placed;
@@ -115,6 +129,13 @@ onMounted(load);
         <Heading h1 separator size="lg">Edit parameters and rerun</Heading>
         <LoadingSpan v-if="loading" message="Loading step" />
         <GAlert v-else-if="loadError" variant="danger" show>{{ loadError }}</GAlert>
+        <div v-else-if="gateReason" class="workflow-step-rerun-gate">
+            <GAlert variant="warning" show>{{ gateReason }}</GAlert>
+            <p>
+                <GLink :to="fullRerunLink">Rerun the whole workflow instead.</GLink>
+                Opens the full run form; this run's step settings are not carried over.
+            </p>
+        </div>
         <div v-else-if="model && step">
             <p>
                 Rerun of <b>{{ model.name }}</b> from
