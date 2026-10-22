@@ -10406,6 +10406,15 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
             )
         invocation_attrs["subworkflow_invocations"] = subworkflow_invocations
 
+        # rerun_of_invocation_id is an id in this database; a link lets the importer relink or drop it.
+        rerun_of_invocation_id = self.rerun_of_invocation_id
+        if rerun_of_invocation_id is not None:
+            source = required_object_session(self).get(WorkflowInvocation, rerun_of_invocation_id)
+            if source is not None:
+                invocation_attrs["rerun_of_invocation"] = source.serialize(
+                    id_encoder, serialization_options, for_link=True
+                )
+
         serialization_options.attach_identifier(id_encoder, self, invocation_attrs)
         return invocation_attrs
 
