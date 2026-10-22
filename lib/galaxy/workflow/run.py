@@ -1,6 +1,7 @@
 import logging
 import uuid
 from collections.abc import MutableMapping
+from functools import cached_property
 from typing import (
     Any,
     Optional,
@@ -200,6 +201,7 @@ class WorkflowInvoker:
                 copy_inputs_to_history=workflow_run_config.copy_inputs_to_history,
                 use_cached_job=workflow_run_config.use_cached_job,
                 replacement_dict=workflow_run_config.replacement_dict,
+                rerun_of_invocation_id=workflow_run_config.rerun_of_invocation_id,
             )
         self.progress = progress
 
@@ -399,6 +401,17 @@ class ModuleInjector(Protocol):
         pass
 
 
+def _original_job_ids(invocation: WorkflowInvocation) -> set[int]:
+    # The cache only ever returns original jobs, so map copies back to what they were copied from.
+    job_ids = set()
+    for invocation_step in invocation.steps:
+        for job in invocation_step.jobs:
+            job_ids.add(job.copied_from_job_id or job.id)
+    for subworkflow_association in invocation.subworkflow_invocations:
+        job_ids |= _original_job_ids(subworkflow_association.subworkflow_invocation)
+    return job_ids
+
+
 def _is_filtered_tool_output(connection: "WorkflowStepConnection") -> bool:
     module = connection.output_step.module
     output_name = connection.output_name
@@ -421,6 +434,8 @@ class WorkflowProgress:
         replacement_dict: dict[str, str] | None = None,
         subworkflow_collection_info=None,
         when_values=None,
+        rerun_of_invocation_id: int | None = None,
+        preferred_cached_job_ids: frozenset[int] | None = None,
     ) -> None:
         self.outputs: dict[int, Any] = {}
         self.tracked_dependencies: set[modules.SchedulingDependency] = set()
@@ -439,6 +454,23 @@ class WorkflowProgress:
         self.subworkflow_collection_info = subworkflow_collection_info
         self.subworkflow_structure = subworkflow_collection_info.structure if subworkflow_collection_info else None
         self.when_values = when_values
+        self.rerun_of_invocation_id = rerun_of_invocation_id
+        if preferred_cached_job_ids is not None:
+            self.preferred_cached_job_ids = preferred_cached_job_ids
+
+    @cached_property
+    def preferred_cached_job_ids(self) -> frozenset[int] | None:
+        """Original job ids from the invocation this one reruns, tried first by the job cache.
+
+        Without this the cache picks the newest equivalent job, whose outputs may be different
+        dataset rows than the ones the source invocation's downstream steps consumed.
+        """
+        if self.rerun_of_invocation_id is None:
+            return None
+        source = self.module_injector.trans.sa_session.get(WorkflowInvocation, self.rerun_of_invocation_id)
+        if source is None:
+            return None
+        return frozenset(_original_job_ids(source))
 
     @property
     def maximum_jobs_to_schedule_or_none(self) -> int | None:
@@ -888,6 +920,7 @@ class WorkflowProgress:
             replacement_dict=self.replacement_dict,
             subworkflow_collection_info=subworkflow_collection_info,
             when_values=when_values,
+            preferred_cached_job_ids=self.preferred_cached_job_ids,
         )
 
     def raw_to_galaxy(self, value: dict):

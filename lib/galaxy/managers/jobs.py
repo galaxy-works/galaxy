@@ -1,7 +1,10 @@
 import hashlib
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import (
+    Collection,
+    Iterable,
+)
 from dataclasses import dataclass
 from datetime import (
     date,
@@ -23,6 +26,7 @@ from pydantic import (
 )
 from sqlalchemy import (
     and_,
+    case,
     exists,
     false,
     func,
@@ -487,8 +491,12 @@ class JobSearch:
         job_state: JobStatesT | None = (Job.states.OK,),
         history_id: int | None = None,
         require_name_match: bool = True,
+        preferred_job_ids: Collection[int] | None = None,
     ) -> Job | None:
-        """Search for jobs producing same results using the 'inputs' part of a tool POST."""
+        """Search for jobs producing same results using the 'inputs' part of a tool POST.
+
+        Candidates in ``preferred_job_ids`` are tried before the others, newest first in both groups.
+        """
         input_data: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
         def populate_input_data_input_id(path: tuple[str | int, ...], key, value) -> tuple[Any, Any]:
@@ -536,6 +544,7 @@ class JobSearch:
             wildcard_param_dump=wildcard_param_dump,
             history_id=history_id,
             require_name_match=require_name_match,
+            preferred_job_ids=preferred_job_ids,
         )
 
     def __search(
@@ -549,6 +558,7 @@ class JobSearch:
         wildcard_param_dump=None,
         history_id: int | None = None,
         require_name_match: bool = True,
+        preferred_job_ids: Collection[int] | None = None,
     ) -> Job | None:
         search_timer = ExecutionTimer()
 
@@ -614,7 +624,7 @@ class JobSearch:
 
         stmt = stmt.where(*data_conditions).group_by(model.Job.id, *used_ids)
         stmt = self._filter_jobs(stmt, tool_id, user.id, tool_version, job_state, wildcard_param_dump, history_id)
-        stmt = self._exclude_jobs_with_deleted_outputs(stmt)
+        stmt = self._exclude_jobs_with_deleted_outputs(stmt, preferred_job_ids)
 
         for job in self.sa_session.execute(stmt):
             # We found a job that is equal in terms of tool_id, user, state and input datasets,
@@ -771,7 +781,9 @@ class JobSearch:
 
         return stmt
 
-    def _exclude_jobs_with_deleted_outputs(self, stmt: "Select[tuple[int]]") -> "Select":
+    def _exclude_jobs_with_deleted_outputs(
+        self, stmt: "Select[tuple[int]]", preferred_job_ids: Collection[int] | None = None
+    ) -> "Select":
         subquery_alias = stmt.subquery("filtered_jobs_subquery")
         outer_select_columns = [subquery_alias.c[col.name] for col in stmt.selected_columns]
         outer_stmt = select(*outer_select_columns).select_from(subquery_alias)
@@ -806,11 +818,11 @@ class JobSearch:
             # This can be considerable faster with large job tables,
             # but is only available on postgresql >= 12.
             unordered_results_cte = unordered_results_cte.prefix_with("MATERIALIZED")
-        final_ordered_stmt = (
-            select(*unordered_results_cte.c)
-            .select_from(unordered_results_cte)
-            .order_by(unordered_results_cte.c.job_id.desc())
-        )
+        job_id_column = unordered_results_cte.c.job_id
+        final_ordered_stmt = select(*unordered_results_cte.c).select_from(unordered_results_cte)
+        if preferred_job_ids:
+            final_ordered_stmt = final_ordered_stmt.order_by(case((job_id_column.in_(preferred_job_ids), 0), else_=1))
+        final_ordered_stmt = final_ordered_stmt.order_by(job_id_column.desc())
         return final_ordered_stmt
 
     def _build_stmt_for_hda(

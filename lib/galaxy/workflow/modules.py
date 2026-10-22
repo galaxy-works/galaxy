@@ -3301,6 +3301,7 @@ class ToolModule(WorkflowModule):
             trans,
             use_cached_job,
             param_combinations,
+            preferred_job_ids=progress.preferred_cached_job_ids if use_cached_job else None,
         )
         try:
             mapping_params = MappingParameters(
