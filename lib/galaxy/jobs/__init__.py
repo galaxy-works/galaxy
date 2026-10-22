@@ -142,6 +142,8 @@ from galaxy.web_stack.handlers import ConfiguresHandlers
 from galaxy.work.context import WorkRequestContext
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
+
     from galaxy.jobs.handler import BaseJobHandlerQueue
     from galaxy.model import HistoryDatasetAssociation
     from galaxy.tools import Tool
@@ -1379,7 +1381,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 param=params,
                 param_dump=json_internal,
                 require_name_match=False,
-                preferred_job_ids=self._rerun_source_job_ids(job),
+                preferred_job_ids=self._rerun_source_jobs(job),
             )
             if job_to_copy and isinstance(job_to_copy, Job):
                 job.copy_from_job(job_to_copy, copy_outputs=True)
@@ -1403,11 +1405,11 @@ class MinimalJobWrapper(HasResourceParameters):
         self.sa_session.commit()
         log.debug(f"Job wrapper for Job [{job.id}] prepared {prepare_timer}")
 
-    def _rerun_source_job_ids(self, job: Job) -> frozenset[int] | None:
+    def _rerun_source_jobs(self, job: Job) -> "Select[tuple[int]] | None":
         invocation_step = job.effective_workflow_invocation_step
         if invocation_step is None:
             return None
-        return invocation_step.workflow_invocation.rerun_source_job_ids()
+        return invocation_step.workflow_invocation.rerun_source_jobs_statement(invocation_step.workflow_step_id)
 
     def _setup_working_directory(self, job=None):
         if job is None:
