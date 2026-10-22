@@ -501,3 +501,49 @@ describe("plain text next to a MultiTags filter (history list advanced search)",
         });
     });
 });
+
+describe("key:value tags (e.g. a clicked `project:lung` tag chip)", () => {
+    const filters = getHistoryListFilters("published");
+
+    function parse(text) {
+        return Object.fromEntries(filters.getFiltersForText(text, true, false));
+    }
+
+    function backendText(text) {
+        return filters.getFilterText(filters.getValidFilters(parse(text), true).validFilters, true, text);
+    }
+
+    test("a quoted key:value tag keeps the whole tag as the value", () => {
+        // this list doesn't quoteStrings, so quotes pass through verbatim like for any quoted tag
+        expect(parse("tag:'foo'")).toEqual({ tag: ["'foo'"] });
+        expect(parse("tag:'project:lung'")).toEqual({ tag: ["'project:lung'"] });
+        expect(parse("tag:'a:b:c'")).toEqual({ tag: ["'a:b:c'"] });
+    });
+
+    test("a quoted key:value tag has its quotes stripped when quoteStrings is on", () => {
+        expect(HistoryFilters.getFilterValue("tag:'project:lung'", "tag")).toBe("project:lung");
+        expect(HistoryFilters.getFilterValue("tag:'a:b:c'", "tag")).toBe("a:b:c");
+    });
+
+    test("an unquoted key:value tag is not split at its last colon", () => {
+        expect(parse("tag:project:lung")).toEqual({ tag: ["project:lung"] });
+    });
+
+    test("key:value tags are not reported as invalid filters", () => {
+        for (const text of ["tag:'project:lung'", "tag:'a:b:c'", "tag:project:lung"]) {
+            expect(filters.getValidFilters(parse(text), true).invalidFilters).toEqual({});
+        }
+    });
+
+    test("clicking a key:value tag chip sets a filter that round-trips to the server text", () => {
+        const text = filters.setFilterValue("", "tag", "'project:lung'");
+        expect(text).toBe("tag:'project:lung'");
+        expect(backendText(text)).toBe("tag:'project:lung'");
+        expect(backendText("tag:project:lung")).toBe("tag:project:lung");
+    });
+
+    test("plain name and tag filters are unchanged", () => {
+        expect(parse("name:foo tag:foo")).toEqual({ name: "foo", tag: ["foo"] });
+        expect(backendText("name:foo tag:foo")).toBe("name:foo tag:foo");
+    });
+});
