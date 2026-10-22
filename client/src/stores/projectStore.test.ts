@@ -105,4 +105,49 @@ describe("useProjectStore", () => {
         expect(store.loaded).toBe(true);
         expect(store.histories).toHaveLength(1);
     });
+
+    it("clears loaded on a failed refresh so the next fetch retries", async () => {
+        serve([history("h1", "Lung run", ["project:lung"])], []);
+        const store = useProjectStore();
+        await store.fetch();
+        expect(store.loaded).toBe(true);
+
+        server.use(
+            http.get("/api/histories", ({ response }) =>
+                response("5XX").json({ err_code: 500001, err_msg: "Histories broke" }, { status: 500 }),
+            ),
+        );
+        await store.refresh();
+        expect(store.error).toContain("Histories broke");
+        expect(store.loaded).toBe(false);
+
+        serve([history("h1", "Lung run", ["project:lung"]), history("h2", "Lung run 2", ["project:lung"])], []);
+        await store.fetch();
+        expect(store.error).toBeUndefined();
+        expect(store.histories).toHaveLength(2);
+    });
+
+    it("ignores a slow response from an earlier refresh", async () => {
+        let releaseSlow: () => void = () => {};
+        const slow = new Promise<void>((resolve) => (releaseSlow = resolve));
+        server.use(
+            http.get("/api/histories", async ({ response }) => {
+                await slow;
+                return response(200).json([history("old", "Stale", ["project:old"])] as any);
+            }),
+            http.get("/api/workflows", ({ response }) => response(200).json([])),
+        );
+        const store = useProjectStore();
+        const first = store.refresh();
+
+        serve([history("new", "Fresh", ["project:new"])], []);
+        await store.refresh();
+        expect(store.histories.map((h) => h.id)).toEqual(["new"]);
+        expect(store.loading).toBe(false);
+
+        releaseSlow();
+        await first;
+        expect(store.histories.map((h) => h.id)).toEqual(["new"]);
+        expect(store.loading).toBe(false);
+    });
 });

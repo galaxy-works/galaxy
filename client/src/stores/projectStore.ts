@@ -28,6 +28,8 @@ export const useProjectStore = defineStore("projectStore", () => {
     ]);
 
     let pending: Promise<void> | undefined;
+    // Bumped per load so a slow response from an earlier refresh can't overwrite a newer one.
+    let generation = 0;
 
     function start() {
         const request = load().finally(() => {
@@ -40,6 +42,7 @@ export const useProjectStore = defineStore("projectStore", () => {
     }
 
     async function load() {
+        const requestGeneration = ++generation;
         loading.value = true;
         error.value = undefined;
         try {
@@ -70,9 +73,13 @@ export const useProjectStore = defineStore("projectStore", () => {
                     },
                 }),
             ]);
+            if (requestGeneration !== generation) {
+                return;
+            }
             const failure = historyResult.error ?? workflowResult.error;
             if (failure) {
                 error.value = errorMessageAsString(failure);
+                loaded.value = false;
                 return;
             }
             // The raw search term also matches item *names* containing "project:", so filter on the tags themselves.
@@ -82,9 +89,14 @@ export const useProjectStore = defineStore("projectStore", () => {
             );
             loaded.value = true;
         } catch (e) {
-            error.value = errorMessageAsString(e);
+            if (requestGeneration === generation) {
+                error.value = errorMessageAsString(e);
+                loaded.value = false;
+            }
         } finally {
-            loading.value = false;
+            if (requestGeneration === generation) {
+                loading.value = false;
+            }
         }
     }
 
