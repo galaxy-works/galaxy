@@ -8971,6 +8971,79 @@ steps:
         assert third_request_export["rerun_step_index"] == int(d_index)
 
     @skip_without_tool("cat1")
+    def test_step_rerun_prefers_source_jobs_at_job_preparation(self, history_id: str):
+        # When the scheduling-time cache lookup misses because input names differ, the job is
+        # looked up again (names ignored) when it is prepared. That second lookup must prefer the
+        # source invocation's jobs too, not the newest equivalent job.
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_input: data
+steps:
+  a:
+    tool_id: cat1
+    in:
+      input1: the_input
+  b:
+    tool_id: cat1
+    in:
+      input1: a/out_file1
+""")
+        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n3\n", wait=True)
+        first_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"the_input": {"src": "hda", "id": hda["id"]}}),
+            "inputs_by": "name",
+        }
+
+        def invoke(request: dict) -> str:
+            return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+        def jobs_by_label(invocation_id: str) -> dict[str, dict]:
+            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
+            by_label = {}
+            for step in invocation["steps"]:
+                if step["jobs"]:
+                    assert len(step["jobs"]) == 1
+                    job = self.dataset_populator.get_job_details(step["jobs"][0]["id"], full=True).json()
+                    assert job["state"] == "ok", job
+                    by_label[step["workflow_step_label"]] = job
+            return by_label
+
+        first_invocation_id = invoke(first_request)
+        # A newer plain run creates newer original jobs equivalent to a and b.
+        unrelated_invocation_id = invoke(first_request)
+
+        # A renamed copy of the input shares the dataset but fails the scheduling-time name match.
+        copy_response = self._post(
+            f"histories/{history_id}/contents",
+            data={"content": hda["id"], "source": "hda", "type": "dataset"},
+            json=True,
+        )
+        self._assert_status_code_is(copy_response, 200)
+        renamed_copy = copy_response.json()
+        self.dataset_populator.rename_dataset(renamed_copy["id"], "renamed input")
+
+        rerun_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"the_input": {"src": "hda", "id": renamed_copy["id"]}}),
+            "inputs_by": "name",
+            "use_cached_job": True,
+            "rerun_of_invocation_id": first_invocation_id,
+        }
+        rerun_invocation_id = invoke(rerun_request)
+
+        first_jobs = jobs_by_label(first_invocation_id)
+        unrelated_jobs = jobs_by_label(unrelated_invocation_id)
+        rerun_jobs = jobs_by_label(rerun_invocation_id)
+        for label in ("a", "b"):
+            assert rerun_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], (
+                label,
+                rerun_jobs[label]["copied_from_job_id"],
+                unrelated_jobs[label]["id"],
+            )
+
+    @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
     def test_workflow_rerun_with_cached_job_consumes_implicit_hdca(self, history_id: str):
         workflow = """
