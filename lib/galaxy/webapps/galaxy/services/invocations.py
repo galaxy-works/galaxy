@@ -13,6 +13,7 @@ from galaxy.exceptions import (
     AdminRequiredException,
     InconsistentDatabase,
     ObjectNotFound,
+    RequestParameterInvalidException,
 )
 from galaxy.managers.context import (
     ProvidesAppContext,
@@ -106,11 +107,15 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
             invocation_payload.workflow_id = self._workflows_manager.get_stored_workflow(
                 trans, workflow_id, by_stored_id=not instance
             ).id
+        if invocation_payload.history_id and invocation_payload.history_ids:
+            raise RequestParameterInvalidException("Only one of history_id and history_ids may be specified.")
         if invocation_payload.history_id:
             # access check
             self._histories_manager.get_accessible(
                 invocation_payload.history_id, trans.user, current_history=trans.history
             )
+        for history_id in invocation_payload.history_ids or []:
+            self._histories_manager.get_accessible(history_id, trans.user, current_history=trans.history)
         if not trans.user_is_admin:
             # We restrict the query to the current users' invocations
             # Endpoint requires user login, so trans.user.id is never None
@@ -126,6 +131,7 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
             trans,
             stored_workflow_id=invocation_payload.workflow_id,
             history_id=invocation_payload.history_id,
+            history_ids=invocation_payload.history_ids,
             job_id=invocation_payload.job_id,
             user_id=user_id,
             include_terminal=invocation_payload.include_terminal,

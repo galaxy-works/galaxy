@@ -1322,6 +1322,17 @@ HistoryIdQueryParam = Annotated[
     ),
 ]
 
+HistoryIdsQueryParam = Annotated[
+    list[DecodedDatabaseIdField] | None,
+    Query(
+        title="History IDs",
+        description=(
+            "Return only invocations in any of these History IDs. Multiple values can be specified by repeating"
+            " the parameter. Cannot be combined with `history_id`."
+        ),
+    ),
+]
+
 JobIdQueryParam = Annotated[
     DecodedDatabaseIdField | None,
     Query(
@@ -1425,6 +1436,7 @@ class FastAPIInvocations:
         response: Response,
         workflow_id: WorkflowIdQueryParam = None,
         history_id: HistoryIdQueryParam = None,
+        history_ids: HistoryIdsQueryParam = None,
         job_id: JobIdQueryParam = None,
         user_id: UserIdQueryParam = None,
         sort_by: InvocationsSortByQueryParam = None,
@@ -1445,6 +1457,7 @@ class FastAPIInvocations:
         invocation_payload = InvocationIndexPayload(
             workflow_id=workflow_id,
             history_id=history_id,
+            history_ids=history_ids,
             job_id=job_id,
             user_id=user_id,
             sort_by=sort_by,

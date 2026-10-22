@@ -10772,6 +10772,58 @@ steps: []
                 "invocations?limit=1&sort_by=create_time&sort_desc=false&offset=1", target_invocation=new_invocation
             )
 
+    def test_invocation_filtering_by_history_ids(self):
+        empty_workflow = """
+class: GalaxyWorkflow
+inputs:
+  input:
+    type: data
+    optional: true
+steps: []
+"""
+        with self._different_user_history(email=f"{uuid4()}@test.com") as history_a:
+            history_b = self.dataset_populator.new_history()
+            history_c = self.dataset_populator.new_history()
+            invocation_ids = {}
+            for history_id in (history_a, history_b, history_c):
+                self._run_jobs(empty_workflow, history_id=history_id, wait=False)
+                invocation_ids[history_id] = self._assert_invocation_for_url_is(f"invocations?history_id={history_id}")[
+                    "id"
+                ]
+
+            response = self._get(f"invocations?history_ids={history_a}&history_ids={history_b}")
+            self._assert_status_code_is(response, 200)
+            assert {i["id"] for i in response.json()} == {invocation_ids[history_a], invocation_ids[history_b]}
+            assert response.headers["total_matches"] == "2"
+
+            base = f"invocations?history_ids={history_a}&history_ids={history_c}&limit=1&sort_by=create_time"
+            response = self._get(f"{base}&sort_desc=false")
+            self._assert_status_code_is(response, 200)
+            assert [i["id"] for i in response.json()] == [invocation_ids[history_a]]
+            assert response.headers["total_matches"] == "2"
+            response = self._get(f"{base}&sort_desc=false&offset=1")
+            assert [i["id"] for i in response.json()] == [invocation_ids[history_c]]
+            response = self._get(f"{base}&sort_desc=true")
+            assert [i["id"] for i in response.json()] == [invocation_ids[history_c]]
+
+            # a single history behaves like history_id
+            response = self._get(f"invocations?history_ids={history_b}")
+            assert [i["id"] for i in response.json()] == [invocation_ids[history_b]]
+
+    def test_invocation_filtering_by_history_ids_access_check(self):
+        other_user_history_id = self.dataset_populator.new_history()
+        with self._different_user_history(email=f"{uuid4()}@test.com") as history_id:
+            # the single-id path rejects an inaccessible history; history_ids should match it
+            single_response = self._get(f"invocations?history_id={other_user_history_id}")
+            multi_response = self._get(f"invocations?history_ids={history_id}&history_ids={other_user_history_id}")
+            self._assert_status_code_is(single_response, 403)
+            self._assert_status_code_is(multi_response, 403)
+
+    def test_invocation_filtering_history_id_and_history_ids_exclusive(self):
+        with self._different_user_history(email=f"{uuid4()}@test.com") as history_id:
+            response = self._get(f"invocations?history_id={history_id}&history_ids={history_id}")
+            self._assert_status_code_is(response, 400)
+
     def _assert_invocation_for_url_is(self, route, target_invocation=None):
         response = self._get(route)
         self._assert_status_code_is(response, 200)

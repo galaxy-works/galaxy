@@ -44293,6 +44293,8 @@ export interface operations {
                 workflow_id?: string | null;
                 /** @description Return only invocations for this History ID */
                 history_id?: string | null;
+                /** @description Return only invocations in any of these History IDs. Multiple values can be specified by repeating the parameter. Cannot be combined with `history_id`. */
+                history_ids?: string[] | null;
                 /** @description Return only invocations for this Job ID */
                 job_id?: string | null;
                 /** @description Return invocations for this User ID. */
