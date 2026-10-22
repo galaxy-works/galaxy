@@ -5713,6 +5713,36 @@ some_file:
         encoded_id = request["inputs"]["WorkflowInput2"]["id"]
         assert self.dataset_populator.get_history_dataset_content(history_id, dataset_id=encoded_id).strip() == "4 5 6"
 
+    @skip_without_tool("random_lines1")
+    def test_workflow_request_recover_subworkflow_step_parameters(self):
+        with self.dataset_populator.test_history() as history_id:
+            run_summary = self._run_workflow(
+                WORKFLOW_NESTED_RUNTIME_PARAMETER,
+                test_data="""
+step_parameters:
+  '1':
+    '1|num_lines': 2
+outer_input:
+  value: 1.bed
+  type: File
+""",
+                history_id=history_id,
+            )
+            request = self.workflow_populator.invocation_to_request(run_summary.invocation_id)
+            assert request["parameters_normalized"] is True
+            assert request["parameters"] == {"1": {"1|num_lines": 2}}
+
+            request["use_cached_job"] = True
+            rerun_response = self.workflow_populator.invoke_workflow_raw(
+                request["workflow_id"], request, assert_ok=True
+            )
+            self.workflow_populator.wait_for_invocation_and_completion(rerun_response.json()["id"])
+            output = self.dataset_populator.get_history_dataset_details(history_id)
+            content = self.dataset_populator.get_history_dataset_content(history_id, dataset_id=output["id"])
+            assert len([x for x in content.split("\n") if x]) == 2
+            job_details = self.dataset_populator.get_job_details(output["creating_job"], full=True).json()
+            assert job_details["copied_from_job_id"], f"Expected inner job to be cached: {job_details}"
+
     def test_workflow_new_autocreated_history(self):
         workflow = self.workflow_populator.load_workflow(name="test_for_new_autocreated_history")
         workflow_request, history_id, workflow_id = self._setup_workflow_run(workflow)
