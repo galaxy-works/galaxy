@@ -5,9 +5,10 @@ import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import { setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 
 import { useServerMock } from "@/api/client/__mocks__";
-import { type AnyHistoryEntry, getMyHistories, getSharedHistories } from "@/api/histories";
+import { type AnyHistoryEntry, getMyHistories, getPublishedHistories, getSharedHistories } from "@/api/histories";
 import { raisedToasts } from "@/composables/__mocks__/toast";
 import { useUserStore } from "@/stores/userStore";
 
@@ -25,6 +26,7 @@ vi.mock("@/api/histories", async (importOriginal) => ({
     ...(await importOriginal<object>()),
     getMyHistories: vi.fn(),
     getSharedHistories: vi.fn(),
+    getPublishedHistories: vi.fn(),
 }));
 
 const { server, http } = useServerMock();
@@ -51,15 +53,24 @@ const MINE = [history("mine_1", "Mine", "me")];
 
 let failSecond = false;
 
-async function mountHistoryList(activeList: "my" | "shared") {
+async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
     useUserStore().currentUser = FAKE_USER;
+    let mountRouter = router;
+    if (path) {
+        mountRouter = createRouter({
+            history: createMemoryHistory(),
+            routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div></div>" } }],
+        });
+        await mountRouter.push(path);
+        await mountRouter.isReady();
+    }
     const wrapper = mount(HistoryList as object, {
         props: { activeList },
         global: { ...localVue, stubs: { ...localVue.stubs, HistoryCard: true } },
         pinia,
-        router,
+        router: mountRouter,
     });
     await flushPromises();
     return wrapper;
@@ -109,6 +120,7 @@ describe("HistoryList", () => {
         failSecond = false;
         vi.mocked(getSharedHistories).mockResolvedValue({ data: SHARED, total: 2 } as never);
         vi.mocked(getMyHistories).mockResolvedValue({ data: MINE, total: 1 } as never);
+        vi.mocked(getPublishedHistories).mockResolvedValue({ data: [], total: 0 } as never);
     });
 
     it("offers only Remove from Shared for histories selected in the shared view", async () => {
@@ -188,5 +200,28 @@ describe("HistoryList", () => {
 
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(confirm.mock.calls[0]?.[1]).toMatchObject({ title: "Delete History" });
+    });
+
+    it("starts with an empty filter by default", async () => {
+        const wrapper = await mountHistoryList("my", "/histories/list");
+
+        expect((wrapper.find("#history-list-filter input").element as HTMLInputElement).value).toBe("");
+        expect(getMyHistories).toHaveBeenCalledWith(expect.objectContaining({ search: "" }));
+    });
+
+    it("applies the filter query parameter as the initial filter", async () => {
+        const wrapper = await mountHistoryList("my", "/histories/list?filter=tag:lung");
+
+        expect((wrapper.find("#history-list-filter input").element as HTMLInputElement).value).toBe("tag:lung");
+        expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:lung" }));
+    });
+
+    // Only the shared and published lists know the user: filter that ?owner= sets
+    it("combines the filter and owner query parameters", async () => {
+        const wrapper = await mountHistoryList("published", "/histories/list_published?filter=tag:lung&owner=alice");
+
+        const value = (wrapper.find("#history-list-filter input").element as HTMLInputElement).value;
+        expect(value).toContain("tag:lung");
+        expect(value).toContain("user:'alice'");
     });
 });

@@ -5,6 +5,7 @@ import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import { setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { loadWorkflows } from "@/api/workflows";
@@ -44,15 +45,25 @@ const FAKE_USER = getFakeRegisteredUser({
     username: FAKE_USERNAME,
 });
 
-async function mountWorkflowList(activeList: "my" | "shared_with_me" = "my") {
+async function mountWorkflowList(activeList: "my" | "shared_with_me" | "published" = "my", path?: string) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
+
+    let mountRouter = router;
+    if (path) {
+        mountRouter = createRouter({
+            history: createMemoryHistory(),
+            routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div></div>" } }],
+        });
+        await mountRouter.push(path);
+        await mountRouter.isReady();
+    }
 
     const wrapper = mount(WorkflowList as object, {
         props: { activeList },
         global: localVue,
         pinia,
-        router,
+        router: mountRouter,
     });
 
     const userStore = useUserStore();
@@ -341,5 +352,23 @@ describe("WorkflowList", () => {
         expect(wrapper.findComponent(LoadingSpan).exists()).toBe(false);
         expect(wrapper.findAll(".workflow-card")).toHaveLength(3);
         expect(raisedToasts()).toEqual([]);
+    });
+
+    it("applies the filter query parameter as the initial filter", async () => {
+        mockedLoadWorkflows.mockResolvedValue({ data: [], totalMatches: 0 });
+        const wrapper = await mountWorkflowList("my", "/workflows/list?filter=tag:lung");
+
+        expect((wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value).toBe("tag:lung");
+        expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(expect.objectContaining({ filterText: "tag:lung" }));
+    });
+
+    // Only the shared and published lists know the user: filter that ?owner= sets
+    it("combines the filter and owner query parameters", async () => {
+        mockedLoadWorkflows.mockResolvedValue({ data: [], totalMatches: 0 });
+        const wrapper = await mountWorkflowList("published", "/workflows/list_published?filter=tag:lung&owner=alice");
+
+        const value = (wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value;
+        expect(value).toContain("tag:lung");
+        expect(value).toContain("user:'alice'");
     });
 });
