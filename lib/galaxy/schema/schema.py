@@ -1999,6 +1999,11 @@ class InvocationIndexQueryPayload(Model):
         None, title="Workflow ID", description="Return only invocations for this Workflow ID"
     )
     history_id: int | None = Field(None, title="History ID", description="Return only invocations for this History ID")
+    history_ids: list[int] | None = Field(
+        None,
+        title="History IDs",
+        description="Return only invocations in any of these History IDs. Cannot be combined with `history_id`.",
+    )
     job_id: int | None = Field(None, title="Job ID", description="Return only invocations for this Job ID")
     user_id: int | None = Field(None, title="User ID", description="Return invocations for this User ID")
     sort_by: InvocationSortByEnum | None = Field(
