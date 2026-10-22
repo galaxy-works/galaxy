@@ -10,6 +10,7 @@ import re
 import tarfile
 import tempfile
 from collections.abc import (
+    Collection,
     Iterator,
     Mapping,
     MutableMapping,
@@ -2315,6 +2316,7 @@ class Tool(AbstractTool, UsesDictVisibleKeys, MaybeToolParameterBundle):
         trans: "ProvidesUserContext",
         use_cached_job: bool,
         all_params: list[ToolStateJobInstancePopulatedT],
+        preferred_job_ids: Collection[int] | None = None,
     ) -> dict[int, Job | None]:
         completed_jobs: dict[int, Job | None] = {}
         for i, param in enumerate(all_params):
@@ -2330,6 +2332,7 @@ class Tool(AbstractTool, UsesDictVisibleKeys, MaybeToolParameterBundle):
                     param=param,
                     param_dump=param_dump,
                     require_name_match=require_name_match,
+                    preferred_job_ids=preferred_job_ids,
                 )
             else:
                 completed_jobs[i] = None
