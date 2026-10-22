@@ -5,6 +5,7 @@ import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
 import { setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryHistory, createRouter } from "vue-router";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { loadWorkflows } from "@/api/workflows";
@@ -35,14 +36,25 @@ const FAKE_USER = getFakeRegisteredUser({
     username: FAKE_USERNAME,
 });
 
-async function mountWorkflowList() {
+async function mountWorkflowList(path?: string, activeList = "my") {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
+
+    let mountRouter = router;
+    if (path) {
+        mountRouter = createRouter({
+            history: createMemoryHistory(),
+            routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div></div>" } }],
+        });
+        await mountRouter.push(path);
+        await mountRouter.isReady();
+    }
 
     const wrapper = mount(WorkflowList as object, {
         global: localVue,
         pinia,
-        router,
+        router: mountRouter,
+        props: { activeList },
     });
 
     const userStore = useUserStore();
@@ -133,5 +145,22 @@ describe("WorkflowList", () => {
 
         expect((wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value).toBe("");
         await flushPromises();
+    });
+    it("applies the filter query parameter as the initial filter", async () => {
+        mockedLoadWorkflows.mockResolvedValue({ data: [], totalMatches: 0 });
+        const wrapper = await mountWorkflowList("/workflows/list?filter=tag:lung");
+
+        expect((wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value).toBe("tag:lung");
+        expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(expect.objectContaining({ filterText: "tag:lung" }));
+    });
+
+    // Only the shared and published lists know the user: filter that ?owner= sets
+    it("combines the filter and owner query parameters", async () => {
+        mockedLoadWorkflows.mockResolvedValue({ data: [], totalMatches: 0 });
+        const wrapper = await mountWorkflowList("/workflows/list_published?filter=tag:lung&owner=alice", "published");
+
+        const value = (wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value;
+        expect(value).toContain("tag:lung");
+        expect(value).toContain("user:'alice'");
     });
 });
