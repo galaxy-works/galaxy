@@ -3321,10 +3321,13 @@ steps:
         assert col["options"] == []
         assert col["textable"] is True
         assert col["data_ref"] == "input1"
+        assert col["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "input1"}
         select_step = _step_by_label(editor["steps"].values(), "select_step")
         select_single = _input_by_name(select_step["config_form"]["inputs"], "select_single")
         assert select_single["options"] == []
         assert select_single["textable"] is True
+        assert select_single["data_ref"] == "single"
+        assert select_single["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "single"}
 
     @skip_without_tool("column_param")
     @skip_without_tool("select_from_dataset")
@@ -3339,9 +3342,11 @@ steps:
             col = _input_by_name(column_step["inputs"], "col")
             assert col["options"] == []
             assert col["textable"] is True
+            assert col["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "input1"}
             select_step = _step_by_label(run_form["steps"], "select_step", key="step_label")
             select_single = _input_by_name(select_step["inputs"], "select_single")
             assert select_single["options"] == []
+            assert select_single["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "single"}
 
             # The run form refetches the step through tools/{id}/build once the runner picks a dataset.
             built = self.dataset_populator.build_tool_state(
@@ -3350,11 +3355,13 @@ steps:
             col = _input_by_name(built["inputs"], "col")
             assert [option[1] for option in col["options"]] == ["1", "2", "3"]
             assert col["textable"] is False
+            assert "options_unavailable" not in col
             built = self.dataset_populator.build_tool_state(
                 "select_from_dataset", history_id, inputs={"single": {"values": [{"src": "hda", "id": hda["id"]}]}}
             )
             select_single = _input_by_name(built["inputs"], "select_single")
             assert [option[1] for option in select_single["options"]] == ["a", "1"]
+            assert "options_unavailable" not in select_single
 
     @skip_without_tool("column_param")
     @skip_without_tool("select_from_dataset")
@@ -3369,12 +3376,22 @@ steps:
             col = _input_by_name(built["inputs"], "col")
             assert col["options"] == []
             assert col["textable"] is True
+            assert col["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "input1"}
             built = self.dataset_populator.build_tool_state(
                 "select_from_dataset", history_id, inputs={"single": {"values": [{"src": "hda", "id": hda["id"]}]}}
             )
             select_single = _input_by_name(built["inputs"], "select_single")
             assert select_single["options"] == []
             assert select_single["textable"] is True
+            assert select_single["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "single"}
+
+    @skip_without_tool("column_param")
+    def test_dynamic_select_options_unavailable_without_dataset(self):
+        with self.dataset_populator.test_history() as history_id:
+            built = self.dataset_populator.build_tool_state("column_param", history_id)
+            col = _input_by_name(built["inputs"], "col")
+            assert col["options"] == []
+            assert col["options_unavailable"] == {"reason": "data_ref_missing", "data_ref": "input1"}
 
     @skip_without_tool("mapper")
     @skip_without_tool("pileup")
