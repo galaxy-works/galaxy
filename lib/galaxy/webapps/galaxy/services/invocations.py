@@ -34,6 +34,7 @@ from galaxy.model import (
     WorkflowInvocation,
     WorkflowInvocationStep,
     WorkflowRequestInputParameter,
+    WorkflowStep,
 )
 from galaxy.schema.fields import DecodedDatabaseIdField
 from galaxy.schema.invocation import (
@@ -368,13 +369,13 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
             elif parameter_type == param_types.RESOURCE_PARAMETERS:
                 resource_params[parameter.name] = parameter.value
             elif parameter_type == param_types.STEP_PARAMETERS:
-                # TODO: test subworkflows and ensure this works
                 step_id: int
                 try:
                     step_id = int(parameter.name)
                 except TypeError:
                     raise InconsistentDatabase("saved workflow step parameters not in the format expected")
-                step_param_map[str(steps_by_id[step_id].order_index)] = json.loads(parameter.value)
+                step = steps_by_id[step_id]
+                step_param_map[str(step.order_index)] = _export_step_parameters(step, json.loads(parameter.value))
 
         return WorkflowInvocationRequestModel(
             history_id=history_id,
@@ -391,3 +392,18 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
             parameters_normalized=True,
             parameters=None if not step_param_map else step_param_map,
         )
+
+
+def _export_step_parameters(step: WorkflowStep, param_dict: dict[str, Any]) -> dict[str, Any]:
+    # Subworkflow step parameters are stored nested and keyed by inner step database id,
+    # but _normalize_step_parameters only accepts the flat "<inner order_index>|<name>" form.
+    if step.type != "subworkflow":
+        return param_dict
+    assert step.subworkflow
+    inner_steps_by_id = step.subworkflow.steps_by_id
+    flat: dict[str, Any] = {}
+    for inner_step_id, inner_params in param_dict.items():
+        inner_step = inner_steps_by_id[int(inner_step_id)]
+        for name, value in _export_step_parameters(inner_step, inner_params).items():
+            flat[f"{inner_step.order_index}|{name}"] = value
+    return flat
