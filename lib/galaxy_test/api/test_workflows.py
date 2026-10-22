@@ -8990,6 +8990,90 @@ steps:
             assert content == expected
 
     @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_mapped_over_step_reuses_per_element(self, history_id: str):
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_collection:
+    type: data_collection_input
+    collection_type: list
+steps:
+  first_cat:
+    tool_id: cat1
+    in:
+      input1: the_collection
+  random_lines:
+    tool_id: random_lines1
+    state:
+      num_lines: 3
+      seed_source:
+        seed_source_selector: set_seed
+        seed: asdf
+    in:
+      input: first_cat/out_file1
+  downstream_cat:
+    tool_id: cat1
+    in:
+      input1: random_lines/out_file1
+""")
+        edited_step = self._step_rerun_order_indices(workflow_id)["random_lines"]
+        hdca = self.dataset_collection_populator.create_list_in_history(
+            history_id, contents=[("el1", "1\n2\n3\n4\n5\n6\n"), ("el2", "a\nb\nc\nd\ne\nf\n")]
+        ).json()
+        hdca = self.dataset_collection_populator.wait_for_fetched_collection(hdca)
+        first_invocation_id = self._step_rerun_invoke(
+            workflow_id,
+            history_id,
+            {"the_collection": self._ds_entry(hdca)},
+            {edited_step: dict(STEP_RERUN_RANDOM_LINES_PARAMETERS)},
+        )
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}
+        )
+
+        first_jobs = self._step_rerun_jobs(first_invocation_id)
+        second_jobs = self._step_rerun_jobs(second_invocation_id)
+        assert set(first_jobs) == set(second_jobs) == {"first_cat", "random_lines", "downstream_cat"}
+        for label, jobs in first_jobs.items():
+            assert len(jobs) == len(second_jobs[label]) == 2, label
+            for job in jobs:
+                assert not job["copied_from_job_id"], job
+        # every element of the step upstream of the edit reuses its own first-run job
+        assert sorted(job["copied_from_job_id"] for job in second_jobs["first_cat"]) == sorted(
+            job["id"] for job in first_jobs["first_cat"]
+        )
+        # every element of the edited step and its downstream is a new job
+        for label in ("random_lines", "downstream_cat"):
+            for job in second_jobs[label]:
+                assert not job["copied_from_job_id"], job
+        for job in second_jobs["random_lines"]:
+            assert json.loads(job["params"]["num_lines"]) == "2"
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_into_new_history(self, history_id: str):
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
+        new_history_id = self.dataset_populator.new_history()
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}, history_id=new_history_id
+        )
+        assert self.workflow_populator.get_invocation(second_invocation_id)["history_id"] == new_history_id
+
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            second_jobs,
+            reused={"first_cat", "second_cat", "sibling_lines"},
+            recomputed={"random_lines", "downstream_cat"},
+        )
+        new_history_contents = {item["id"] for item in self.dataset_populator.get_history_contents(new_history_id)}
+        for label, job in second_jobs.items():
+            assert job["history_id"] == new_history_id, job
+            assert job["outputs"]["out_file1"]["id"] in new_history_contents, label
+
+    @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
     def test_workflow_rerun_with_cached_job_consumes_implicit_hdca(self, history_id: str):
         workflow = """
