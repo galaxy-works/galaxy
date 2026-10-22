@@ -9256,6 +9256,32 @@ steps:
         )
 
     @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_with_newer_equivalent_job_outside_invocation_prefers_source(self, history_id: str):
+        # Same setup as the xfail above, but the rerun names its source invocation, so the job
+        # cache prefers that invocation's jobs over the newer hand-run one and the chain holds.
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        the_input = first_jobs["first_cat"]["inputs"]["input1"]
+        run = self.dataset_populator.run_tool("cat1", {"input1": the_input}, history_id)
+        self.dataset_populator.wait_for_job(run["jobs"][0]["id"], assert_ok=True)
+
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id,
+            workflow_id,
+            edited_step,
+            {"num_lines": "2"},
+            rerun_of_invocation_id=first_invocation_id,
+        )
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            second_jobs,
+            reused={"first_cat", "second_cat", "sibling_lines"},
+            recomputed={"random_lines", "downstream_cat"},
+        )
+
+    @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
     def test_workflow_rerun_with_cached_job_consumes_implicit_hdca(self, history_id: str):
         workflow = """
