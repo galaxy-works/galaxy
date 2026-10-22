@@ -120,6 +120,22 @@ describe("WorkflowStepRerun", () => {
         expect(wrapper.find("#rerun-step").exists()).toBe(true);
     });
 
+    it("lists the edited step and its downstream steps, leaving the sibling branch out", async () => {
+        const wrapper = await mountStepRerun(1);
+        const plan = wrapper.find(".workflow-step-rerun-plan");
+        const entries = plan.findAll("li").map((entry) => entry.text().replace(/\s+/g, " "));
+        expect(entries).toEqual(["2: Filter (edited)", "3: sorted rows", "5: Concatenate"]);
+        expect(plan.text()).not.toContain("Count");
+        expect(plan.text()).toContain("The remaining steps are expected to reuse their previous jobs.");
+    });
+
+    it("lists only the edited step when nothing is downstream of it", async () => {
+        const wrapper = await mountStepRerun(3);
+        const entries = wrapper.findAll(".workflow-step-rerun-plan li").map((entry) => entry.text());
+        expect(entries).toHaveLength(1);
+        expect(entries[0]).toContain("4: Count");
+    });
+
     it("explains a failed gate and links to the whole-workflow rerun instead of showing the form", async () => {
         vi.mocked(getRunData).mockResolvedValue(
             branchedRunData({ workflow_resource_parameters: { priority: { name: "priority" } } }),

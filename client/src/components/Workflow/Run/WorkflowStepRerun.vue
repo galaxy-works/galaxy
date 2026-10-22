@@ -11,7 +11,13 @@ import { errorMessageAsString } from "@/utils/simple-error";
 
 import { WorkflowRunModel } from "./model";
 import { getRunData, invokeWorkflow } from "./services";
-import { applyStepOverrides, buildStepRerunPayload, evaluateStepRerunGates, type StepParameters } from "./stepRerun";
+import {
+    applyStepOverrides,
+    buildStepRerunPayload,
+    downstreamSteps,
+    evaluateStepRerunGates,
+    type StepParameters,
+} from "./stepRerun";
 
 import GAlert from "@/components/BaseComponents/GAlert.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
@@ -53,6 +59,15 @@ const stepKey = computed(() => String(props.stepIndex));
 const stepTitle = computed(() => step.value?.step_label || step.value?.step_name || `Step ${props.stepIndex + 1}`);
 const invocationLink = computed(() => `/workflows/invocations/${props.invocationId}`);
 const fullRerunLink = computed(() => `/workflows/rerun?invocation_id=${props.invocationId}`);
+
+/** The edited step and everything downstream of it, titled the way the invocation graph titles its nodes */
+const stepsToRecompute = computed(() => {
+    const steps = model.value?.steps ?? [];
+    return [props.stepIndex, ...downstreamSteps(steps, props.stepIndex)].map((index) => {
+        const runStep = steps.find((candidate) => candidate?.step_index === index);
+        return { index, title: `${index + 1}: ${runStep?.step_label || runStep?.step_name || "Unknown step"}` };
+    });
+});
 
 async function load() {
     loading.value = true;
@@ -158,6 +173,16 @@ onMounted(load);
                 :history-id="props.request.history_id"
                 @onChange="onStepChange"
                 @onValidation="onStepValidation" />
+            <div class="workflow-step-rerun-plan mt-3 mb-3">
+                <Heading h2 size="sm">What will run</Heading>
+                <ul>
+                    <li v-for="entry in stepsToRecompute" :key="entry.index">
+                        {{ entry.title }}
+                        <span v-if="entry.index === props.stepIndex" class="text-muted">(edited)</span>
+                    </li>
+                </ul>
+                <p class="text-muted mb-0">The remaining steps are expected to reuse their previous jobs.</p>
+            </div>
             <GAlert v-if="submitError" variant="danger" show>{{ submitError }}</GAlert>
             <GButton
                 id="rerun-step"
