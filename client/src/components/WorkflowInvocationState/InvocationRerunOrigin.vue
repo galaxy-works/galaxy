@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { WorkflowInvocationElementView, WorkflowInvocationRequest } from "@/api/invocations";
+import type { WorkflowInvocationElementView } from "@/api/invocations";
 import { useInvocationStore } from "@/stores/invocationStore";
 
 import GLink from "@/components/BaseComponents/GLink.vue";
-
-// The generated schema doesn't include the rerun lineage fields of the request export yet.
-type RerunLineage = { rerun_of_invocation_id?: string | null; rerun_step_index?: number | null };
 
 const props = defineProps<{
     invocation: WorkflowInvocationElementView;
@@ -16,9 +13,7 @@ const props = defineProps<{
 const invocationStore = useInvocationStore();
 
 const lineage = computed(() => {
-    const request = invocationStore.getInvocationRequestById(props.invocation.id) as
-        | (WorkflowInvocationRequest & RerunLineage)
-        | undefined;
+    const request = invocationStore.getInvocationRequestById(props.invocation.id);
     if (!request?.rerun_of_invocation_id) {
         return null;
     }
