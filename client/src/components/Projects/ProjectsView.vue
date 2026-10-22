@@ -6,17 +6,18 @@
  */
 import { faFolderOpen } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { storeToRefs } from "pinia";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
-import { GalaxyApi, type HistorySummary } from "@/api";
+import { GalaxyApi } from "@/api";
 import type { WorkflowInvocation } from "@/api/invocations";
-import type { WorkflowSummary } from "@/api/workflows";
+import { useProjectStore } from "@/stores/projectStore";
 import { useUserStore } from "@/stores/userStore";
 import { useWorkflowStore } from "@/stores/workflowStore";
 import { errorMessageAsString } from "@/utils/simple-error";
 
-import { buildProjectTree, countNodes, isWithinProject, projectPathsOf, projectTag } from "./projectTags";
+import { buildProjectTree, countNodes, isWithinProject, projectPathsOf } from "./projectTags";
 
 import GAlert from "@/components/BaseComponents/GAlert.vue";
 import GLink from "@/components/BaseComponents/GLink.vue";
@@ -26,9 +27,6 @@ import LoadingSpan from "@/components/LoadingSpan.vue";
 import ProjectTreeNode from "@/components/Projects/ProjectTreeNode.vue";
 import StatelessTags from "@/components/TagsMultiselect/StatelessTags.vue";
 import UtcDate from "@/components/UtcDate.vue";
-
-/** Everything tagged `project:<anything>`: the raw search term matches on tag name only. */
-const PROJECT_SEARCH = projectTag("");
 
 interface ProjectInvocation {
     invocation: WorkflowInvocation;
@@ -49,10 +47,17 @@ const router = useRouter();
 const userStore = useUserStore();
 const workflowStore = useWorkflowStore();
 
-const loading = ref(true);
-const errorMessage = ref<string>();
-const histories = ref<HistorySummary[]>([]);
-const workflows = ref<WorkflowSummary[]>([]);
+const projectStore = useProjectStore();
+const {
+    histories,
+    workflows,
+    historyProjects,
+    workflowProjects,
+    projectPaths,
+    error: errorMessage,
+} = storeToRefs(projectStore);
+// Mirrors the store, but also counts "not fetched yet" as loading so the first render shows the spinner.
+const loading = computed(() => projectStore.loading || (!projectStore.loaded && !projectStore.error));
 const selectedPath = ref<string | undefined>(props.path);
 const includeSubprojects = ref(true);
 
@@ -60,13 +65,7 @@ const invocationsLoading = ref(false);
 const invocationError = ref<string>();
 const invocations = ref<ProjectInvocation[]>([]);
 
-const historyProjects = computed(() => new Map(histories.value.map((h) => [h.id, projectPathsOf(h.tags)])));
-const workflowProjects = computed(() => new Map(workflows.value.map((w) => [w.id, projectPathsOf(w.tags)])));
-
-const tree = computed(() => {
-    const paths = [...historyProjects.value.values(), ...workflowProjects.value.values()].flat();
-    return buildProjectTree(paths);
-});
+const tree = computed(() => buildProjectTree(projectPaths.value));
 
 /** Histories plus workflows tagged with exactly each path, for the tree labels. */
 const exactCounts = computed(() => {
@@ -103,55 +102,6 @@ const breadcrumbItems = computed(() => {
     }
     return items;
 });
-
-async function loadProjectItems() {
-    loading.value = true;
-    errorMessage.value = undefined;
-    try {
-        const [historyResult, workflowResult] = await Promise.all([
-            GalaxyApi().GET("/api/histories", {
-                params: {
-                    query: {
-                        view: "summary",
-                        search: PROJECT_SEARCH,
-                        show_own: true,
-                        show_published: false,
-                        show_shared: false,
-                        sort_by: "update_time",
-                        sort_desc: true,
-                    },
-                },
-            }),
-            GalaxyApi().GET("/api/workflows", {
-                params: {
-                    query: {
-                        search: PROJECT_SEARCH,
-                        show_published: false,
-                        show_shared: false,
-                        skip_step_counts: true,
-                        sort_by: "update_time",
-                        sort_desc: true,
-                    },
-                },
-            }),
-        ]);
-        if (historyResult.error) {
-            throw historyResult.error;
-        }
-        if (workflowResult.error) {
-            throw workflowResult.error;
-        }
-        // The raw search term also matches item *names* containing "project:", so filter on the tags themselves.
-        histories.value = (historyResult.data as HistorySummary[]).filter((h) => projectPathsOf(h.tags).length > 0);
-        workflows.value = (workflowResult.data as unknown as WorkflowSummary[]).filter(
-            (w) => projectPathsOf(w.tags).length > 0,
-        );
-    } catch (error) {
-        errorMessage.value = errorMessageAsString(error);
-    } finally {
-        loading.value = false;
-    }
-}
 
 async function fetchInvocations(query: { history_id?: string; workflow_id?: string }) {
     const { data, error } = await GalaxyApi().GET("/api/invocations", {
@@ -230,7 +180,14 @@ watch(
 );
 watch([selectedPath, includeSubprojects, loading], () => loadInvocations());
 
-onMounted(loadProjectItems);
+onMounted(async () => {
+    if (projectStore.loaded) {
+        // Cached lists never flip `loading`, so the watch above will not load invocations for us.
+        loadInvocations();
+    } else {
+        await projectStore.fetch();
+    }
+});
 </script>
 
 <template>
