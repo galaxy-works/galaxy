@@ -9166,6 +9166,25 @@ steps:
 
     @skip_without_tool("cat1")
     @skip_without_tool("random_lines1")
+    def test_step_rerun_after_upstream_output_purged(self, history_id: str):
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        first_cat_output = first_jobs["first_cat"]["outputs"]["out_file1"]["id"]
+        self.dataset_populator.delete_dataset(history_id, first_cat_output, purge=True, wait_for_purge=True)
+
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}
+        )
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            second_jobs,
+            reused=set(),
+            recomputed={"first_cat", "second_cat", "sibling_lines", "random_lines", "downstream_cat"},
+        )
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
     def test_step_rerun_into_new_history(self, history_id: str):
         workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
         new_history_id = self.dataset_populator.new_history()
