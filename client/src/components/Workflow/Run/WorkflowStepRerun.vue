@@ -11,6 +11,7 @@ import { errorMessageAsString } from "@/utils/simple-error";
 
 import { WorkflowRunModel } from "./model";
 import { getRunData, invokeWorkflow } from "./services";
+import { evaluateStepRerunGates, type StepRerunGateResult } from "./stepRerunGates";
 
 import GAlert from "@/components/BaseComponents/GAlert.vue";
 import GButton from "@/components/BaseComponents/GButton.vue";
@@ -38,6 +39,7 @@ const loadError = ref("");
 const submitError = ref("");
 const submitting = ref(false);
 const model = ref<WorkflowRunModel>();
+const gateFailure = ref<Extract<StepRerunGateResult, { eligible: false }>>();
 const step = ref<Record<string, any>>();
 /** Names of the step's inputs whose value was set at run time on the original invocation */
 const runtimeOverrides = ref<string[]>([]);
@@ -50,6 +52,7 @@ const validationScrollTo = ref<[string, string] | []>([]);
 const stepKey = computed(() => String(props.stepIndex));
 const stepTitle = computed(() => step.value?.step_label || step.value?.step_name || `Step ${props.stepIndex + 1}`);
 const invocationLink = computed(() => `/workflows/invocations/${props.invocationId}`);
+const fullRerunLink = computed(() => `/workflows/rerun?invocation_id=${props.invocationId}`);
 
 /** The collapsed form element shows the server's ``text_value`` of the saved value, so refresh it for scalar overrides. */
 function previewText(input: Record<string, any>, value: unknown): string | undefined {
@@ -111,15 +114,12 @@ async function load() {
     try {
         const runData = await getRunData(props.request.workflow_id, undefined, true);
         const runModel = new WorkflowRunModel(runData);
+        const gate = evaluateStepRerunGates(runModel, props.stepIndex);
+        if (!gate.eligible) {
+            gateFailure.value = gate;
+            return;
+        }
         const runStep = runModel.steps[props.stepIndex];
-        if (!runStep) {
-            loadError.value = `This workflow has no step with index ${props.stepIndex}.`;
-            return;
-        }
-        if (runStep.step_type !== "tool") {
-            loadError.value = `Only tool steps can be edited and rerun; step ${props.stepIndex + 1} is a ${runStep.step_type} step.`;
-            return;
-        }
         const overrides = (props.request.parameters?.[stepKey.value] ?? {}) as StepParameters;
         applyOverrides(runStep.inputs, overrides);
         runStep.expanded = true;
@@ -191,6 +191,17 @@ onMounted(load);
         <Heading h1 separator size="lg">Edit parameters and rerun</Heading>
         <LoadingSpan v-if="loading" message="Loading step" />
         <GAlert v-else-if="loadError" variant="danger" show>{{ loadError }}</GAlert>
+        <GAlert
+            v-else-if="gateFailure"
+            variant="warning"
+            show
+            data-description="step rerun gate"
+            :data-gate-code="gateFailure.code">
+            <p>{{ gateFailure.reason }}</p>
+            <GLink :to="fullRerunLink" data-description="step rerun full rerun link">
+                Opens the full run form; this run's step settings are not carried over.
+            </GLink>
+        </GAlert>
         <div v-else-if="model && step">
             <p>
                 Rerun of <b>{{ model.name }}</b> from
