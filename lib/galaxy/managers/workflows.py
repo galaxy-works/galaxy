@@ -691,6 +691,7 @@ class WorkflowsManager(sharable.SharableModelManager[model.StoredWorkflow], dele
         trans: ProvidesUserContext,
         stored_workflow_id=None,
         history_id=None,
+        history_ids=None,
         job_id=None,
         user_id=None,
         include_terminal=True,
@@ -713,6 +714,8 @@ class WorkflowsManager(sharable.SharableModelManager[model.StoredWorkflow], dele
             stmt = stmt.join(History).where(History.user_id == user_id)
         if history_id is not None:
             stmt = stmt.where(WorkflowInvocation.history_id == history_id)
+        if history_ids:
+            stmt = stmt.where(WorkflowInvocation.history_id.in_(history_ids))
         if job_id is not None:
             stmt = stmt.join(WorkflowInvocationStep).where(WorkflowInvocationStep.job_id == job_id)
         if not include_terminal:
