@@ -4,8 +4,15 @@ import pytest
 
 from galaxy import model
 from galaxy.tools.parameters.options import ParameterOption
-from galaxy.tools.parameters.workflow_utils import RuntimeValue
+from galaxy.tools.parameters.workflow_utils import (
+    ConnectedValue,
+    RuntimeValue,
+)
 from .util import BaseParameterTestCase
+
+FROM_DATASET_OPTIONS = (
+    """<options from_dataset="input_bam"><column name="name" index="0"/><column name="value" index="0"/></options>"""
+)
 
 
 class TestSelectToolParameter(BaseParameterTestCase):
@@ -80,6 +87,75 @@ class TestSelectToolParameter(BaseParameterTestCase):
             self.trans, {"input_bam": "testpath2"}
         )
         assert len(self.param.get_options(self.trans, {"input_bam": "testpath3"})) == 0
+
+    def test_to_dict_static_select_has_no_unavailable_reason(self):
+        param = self._parameter_for(xml="""<param name="my_name" type="select"><option value="a">A</option></param>""")
+        as_dict = param.to_dict(self.trans, {})
+        assert "options_unavailable" not in as_dict
+        assert "data_ref" not in as_dict
+
+    def test_to_dict_from_dataset_emits_data_ref(self):
+        self.options_xml = FROM_DATASET_OPTIONS
+        assert self.param.to_dict(self.trans, {"input_bam": RuntimeValue()})["data_ref"] == "input_bam"
+
+    def test_options_unavailable_data_ref_runtime(self):
+        self.options_xml = FROM_DATASET_OPTIONS
+        for value in [RuntimeValue(), ConnectedValue(), {"__class__": "ConnectedValue"}]:
+            as_dict = self.param.to_dict(self.trans, {"input_bam": value})
+            assert as_dict["options"] == []
+            assert as_dict["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "input_bam"}
+
+    def test_options_unavailable_data_ref_not_ready(self):
+        self.options_xml = FROM_DATASET_OPTIONS
+        hda = self.new_hda()
+        hda._state = model.Dataset.states.QUEUED
+        as_dict = self.param.to_dict(self.trans, {"input_bam": hda})
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "input_bam"}
+        assert as_dict["textable"] is True
+
+    def test_options_unavailable_data_ref_missing(self):
+        self.options_xml = FROM_DATASET_OPTIONS
+        for other_values in [{}, {"input_bam": None}, {"input_bam": []}]:
+            as_dict = self.param.to_dict(self.trans, other_values)
+            assert as_dict["options_unavailable"] == {"reason": "data_ref_missing", "data_ref": "input_bam"}
+
+    def test_options_unavailable_no_options(self):
+        # A ready dataset that yields no rows (here, one without a file) resolves to nothing.
+        self.options_xml = FROM_DATASET_OPTIONS
+        as_dict = self.param.to_dict(self.trans, {"input_bam": self.new_hda()})
+        assert as_dict["options_unavailable"] == {"reason": "no_options", "data_ref": "input_bam"}
+        assert as_dict["textable"] is False
+
+    def test_options_unavailable_no_options_without_data_ref(self):
+        self.options_xml = """<options from_data_table="test_table"><filter type="param_value" ref="input_bam" column="0" /></options>"""
+        as_dict = self.param.to_dict(self.trans, {"input_bam": "testname3"})
+        assert as_dict["options_unavailable"] == {"reason": "no_options", "data_ref": None}
+
+    def test_options_unavailable_data_meta_filter_ref(self):
+        self.options_xml = """<options from_data_table="test_table"><filter type="data_meta" ref="input_bam" key="dbkey" column="0"/></options>"""
+        hda = self.new_hda()
+        hda.dbkey = "hg19"
+        as_dict = self.param.to_dict(self.trans, {"input_bam": hda})
+        assert as_dict["options"] == []
+        assert as_dict["options_unavailable"] == {"reason": "no_options", "data_ref": "input_bam"}
+        hda._state = model.Dataset.states.QUEUED
+        as_dict = self.param.to_dict(self.trans, {"input_bam": hda})
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "input_bam"}
+
+    def test_options_available_has_no_unavailable_reason(self):
+        self.options_xml = """<options from_data_table="test_table"/>"""
+        as_dict = self.param.to_dict(self.trans, {})
+        assert len(as_dict["options"]) == 2
+        assert "options_unavailable" not in as_dict
+
+    def test_group_tag_options_unavailable(self):
+        self.type = "group_tag"
+        self.set_data_ref = True
+        as_dict = self.param.to_dict(self.trans, {"input_bam": ConnectedValue()})
+        assert as_dict["data_ref"] == "input_bam"
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "input_bam"}
+        as_dict = self.param.to_dict(self.trans, {"input_bam": self.new_hda()})
+        assert as_dict["options_unavailable"] == {"reason": "no_options", "data_ref": "input_bam"}
 
     # TODO: Good deal of overlap here with TestDataToolParameter, refactor.
     def setUp(self):

@@ -149,6 +149,36 @@ def is_runtime_context(trans: "ProvidesHistoryContext", other_values):
     return False
 
 
+def _is_ready(item: Any) -> bool:
+    if isinstance(item, HistoryDatasetAssociation):
+        return item.state == Dataset.states.OK and not hasattr(item, "implicit_conversion")
+    if isinstance(item, HistoryDatasetCollectionAssociation):
+        return bool(item.populated)
+    return True
+
+
+def explain_unavailable_options(other_values: Any, data_refs: list[str]) -> dict[str, str | None]:
+    """Explain why a dynamic select resolved to no options.
+
+    Lets clients distinguish "options will exist once the referenced dataset
+    is known/ready" from "this select genuinely has nothing to offer".
+    """
+    for data_ref in data_refs:
+        if data_ref not in other_values:
+            return {"reason": "data_ref_missing", "data_ref": data_ref}
+        value = other_values.get(data_ref)
+        if is_runtime_value(value):
+            return {"reason": "data_ref_runtime", "data_ref": data_ref}
+        items = util.listify(value)
+        if not items:
+            return {"reason": "data_ref_missing", "data_ref": data_ref}
+        if any(is_runtime_value(item) for item in items):
+            return {"reason": "data_ref_runtime", "data_ref": data_ref}
+        if not all(_is_ready(item) for item in items):
+            return {"reason": "data_ref_not_ready", "data_ref": data_ref}
+    return {"reason": "no_options", "data_ref": data_refs[0] if data_refs else None}
+
+
 def parse_dynamic_options(param, input_source):
     dynamic_options_config = input_source.parse_dynamic_options()
     if not dynamic_options_config:
@@ -1408,7 +1438,29 @@ class SelectToolParameter(ToolParameter):
         d["display"] = self.display
         d["multiple"] = self.multiple
         d["textable"] = is_runtime_context(trans, other_values)
+        if data_ref := self._data_ref():
+            d["data_ref"] = data_ref
+        if self.is_dynamic and not options:
+            d["options_unavailable"] = self.options_unavailable(trans, other_values)
         return d
+
+    def _data_ref(self) -> str | None:
+        # Only set for from_dataset options (by DynamicOptions), data_column and group_tag; other code
+        # relies on hasattr(param, "data_ref") to tell those apart, so it is never defaulted here.
+        return getattr(self, "data_ref", None)
+
+    def data_refs(self) -> list[str]:
+        """Names of the data inputs whose content determines the options."""
+        data_ref = self._data_ref()
+        refs = [data_ref] if data_ref else []
+        if self.options:
+            for options_filter in self.options.filters:
+                if isinstance(options_filter, dynamic_options.DataMetaFilter) and options_filter.ref_name not in refs:
+                    refs.append(options_filter.ref_name)
+        return refs
+
+    def options_unavailable(self, trans: "ProvidesHistoryContext", other_values: Any) -> dict[str, str | None]:
+        return explain_unavailable_options(other_values, self.data_refs())
 
     def validate(self, value, trans: "ProvidesHistoryContext | None" = None):
         if not value:
@@ -1800,6 +1852,16 @@ class ColumnListParameter(SelectToolParameter):
 
     def get_dependencies(self):
         return [self.data_ref]
+
+    def options_unavailable(self, trans: "ProvidesHistoryContext", other_values: Any) -> dict[str, str | None]:
+        unavailable = super().options_unavailable(trans, other_values)
+        if unavailable["reason"] == "no_options":
+            # get_options swallows this, but the options will appear once the conversion has run
+            try:
+                self.get_column_list(trans, other_values)
+            except ImplicitConversionRequired:
+                unavailable["reason"] = "data_ref_not_ready"
+        return unavailable
 
     def to_dict(self, trans: "ProvidesHistoryContext", other_values=None):
         other_values = other_values or {}

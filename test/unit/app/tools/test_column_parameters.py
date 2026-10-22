@@ -4,6 +4,7 @@ test_select_parameters.py.
 
 from galaxy import model
 from galaxy.app_unittest_utils.tools_support import datatypes_registry
+from galaxy.tools.parameters.workflow_utils import ConnectedValue
 from galaxy.util import bunch
 from .util import BaseParameterTestCase
 
@@ -62,6 +63,39 @@ class TestDataColumnParameter(BaseParameterTestCase):
         options = self.param.get_options(self.trans, {"input_tsv": self.build_ready_hdca()})
         assert len(options) > 0
 
+    def test_to_dict_options_unavailable_runtime(self):
+        as_dict = self.param.to_dict(self.trans, {"input_tsv": ConnectedValue()})
+        assert as_dict["options"] == []
+        assert as_dict["textable"] is True
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_runtime", "data_ref": "input_tsv"}
+
+    def test_to_dict_options_unavailable_not_ready(self):
+        hda = self.build_ready_hda()
+        hda.state = "queued"
+        hda.metadata.columns = 0
+        as_dict = self.param.to_dict(self.trans, {"input_tsv": hda})
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "input_tsv"}
+
+    def test_to_dict_options_unavailable_implicit_conversion(self):
+        hda = self.build_ready_hda()
+        # No converted dataset exists yet, so get_column_list raises ImplicitConversionRequired.
+        hda.find_conversion_destination = lambda formats: (False, "tabular", None)
+        as_dict = self.param.to_dict(self.trans, {"input_tsv": hda})
+        assert as_dict["options"] == []
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_not_ready", "data_ref": "input_tsv"}
+
+    def test_to_dict_options_unavailable_missing(self):
+        as_dict = self.param.to_dict(self.trans, {})
+        assert as_dict["options_unavailable"] == {"reason": "data_ref_missing", "data_ref": "input_tsv"}
+
+    def test_to_dict_options_unavailable_no_columns(self):
+        # A ready dataset without column metadata has nothing to offer.
+        hda = self.build_ready_hda()
+        hda.metadata.columns = 0
+        as_dict = self.param.to_dict(self.trans, {"input_tsv": hda})
+        assert as_dict["textable"] is False
+        assert as_dict["options_unavailable"] == {"reason": "no_options", "data_ref": "input_tsv"}
+
     def setUp(self):
         super().setUp()
         self.test_history = model.History()
@@ -74,6 +108,7 @@ class TestDataColumnParameter(BaseParameterTestCase):
             get_current_user_roles=lambda: [],
             workflow_building_mode=False,
             webapp=bunch.Bunch(name="galaxy"),
+            security=self.app.security,
         )
 
         self.type = "data_column"
