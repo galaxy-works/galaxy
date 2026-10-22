@@ -521,6 +521,10 @@ watch([filterText, sortBy, sortDesc], async () => {
 });
 
 onMounted(async () => {
+    const initialFilter = router.currentRoute.value.query.filter;
+    if (typeof initialFilter === "string") {
+        filterText.value = initialFilter;
+    }
     if (router.currentRoute.value.query.owner) {
         updateFilterValue("user", `'${router.currentRoute.value.query.owner}'`);
     }

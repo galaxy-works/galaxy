@@ -384,6 +384,9 @@ watch([filterText, sortBy, sortDesc], async () => {
 });
 
 onMounted(() => {
+    if (typeof route.query?.filter === "string") {
+        filterText.value = route.query.filter;
+    }
     if (route.query?.owner) {
         updateFilterValue("user", `'${route.query.owner}'`);
     }
