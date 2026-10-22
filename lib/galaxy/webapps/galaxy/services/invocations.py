@@ -345,6 +345,8 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
         replacement_dict = {}
         resource_params = {}
         use_cached_job = False
+        rerun_of_invocation_id = None
+        rerun_step_index = None
         preferred_object_store_id = None
         preferred_intermediate_object_store_id = None
         preferred_outputs_object_store_id = None
@@ -359,6 +361,10 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
                 # we wouldn't want to include this on re-run.
                 if parameter.name == "use_cached_job":
                     use_cached_job = parameter.value == "true"
+                if parameter.name == "rerun_of_invocation_id":
+                    rerun_of_invocation_id = trans.security.encode_id(int(parameter.value))
+                if parameter.name == "rerun_step_index":
+                    rerun_step_index = int(parameter.value)
                 if parameter.name == "preferred_object_store_id":
                     preferred_object_store_id = parameter.value
                 if parameter.name == "preferred_intermediate_object_store_id":
@@ -385,6 +391,8 @@ class InvocationsService(ServiceBase, ConsumesModelStores):
             replacement_params=None if not replacement_dict else replacement_dict,
             resource_params=None if not resource_params else resource_params,
             use_cached_job=use_cached_job,
+            rerun_of_invocation_id=rerun_of_invocation_id,
+            rerun_step_index=rerun_step_index,
             preferred_object_store_id=preferred_object_store_id,
             preferred_intermediate_object_store_id=preferred_intermediate_object_store_id,
             preferred_outputs_object_store_id=preferred_outputs_object_store_id,
