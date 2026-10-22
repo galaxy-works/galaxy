@@ -9036,6 +9036,177 @@ steps:
         assert third_request_export["rerun_step_index"] == int(d_index)
 
     @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_prefers_jobs_from_source_invocation_mapped_over(self, history_id: str):
+        # Same as test_step_rerun_prefers_jobs_from_source_invocation, but every step is mapped
+        # over a collection, so the source invocation's jobs live behind implicit collection jobs.
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  collection_input:
+    type: data_collection_input
+steps:
+  a:
+    tool_id: cat1
+    in:
+      input1: collection_input
+  b:
+    tool_id: cat1
+    in:
+      input1: a/out_file1
+  c:
+    tool_id: random_lines1
+    state:
+      num_lines: 3
+      seed_source:
+        seed_source_selector: set_seed
+        seed: asdf
+    in:
+      input: b/out_file1
+""")
+        workflow = self.workflow_populator.download_workflow(workflow_id)
+        order_index_by_label = {step["label"]: int(index) for index, step in workflow["steps"].items()}
+        c_index = str(order_index_by_label["c"])
+
+        hdca = self.dataset_collection_populator.create_list_in_history(
+            history_id,
+            contents=[("sample1", "1\n2\n3\n4\n5\n"), ("sample2", "6\n7\n8\n9\n10\n"), ("sample3", "a\nb\nc\nd\ne\n")],
+        ).json()
+        hdca = self.dataset_collection_populator.wait_for_fetched_collection(hdca)
+        element_count = 3
+        first_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"collection_input": self._ds_entry(hdca)}),
+            "inputs_by": "name",
+            "parameters_normalized": True,
+            "parameters": json.dumps(
+                {
+                    c_index: {
+                        "num_lines": "4",
+                        "seed_source|seed_source_selector": "set_seed",
+                        "seed_source|seed": "asdf",
+                    }
+                }
+            ),
+        }
+
+        def invoke(request: dict) -> str:
+            return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+        def jobs_by_label(invocation_id: str) -> dict[str, list[dict]]:
+            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
+            by_label = {}
+            for step in invocation["steps"]:
+                if step["jobs"]:
+                    assert len(step["jobs"]) == element_count, step
+                    jobs = [self.dataset_populator.get_job_details(job["id"], full=True).json() for job in step["jobs"]]
+                    for job in jobs:
+                        assert job["state"] == "ok", job
+                    by_label[step["workflow_step_label"]] = jobs
+            return by_label
+
+        first_invocation_id = invoke(first_request)
+        # Run the workflow again plainly, creating newer original jobs equivalent to a and b.
+        unrelated_invocation_id = invoke(first_request)
+
+        rerun_request = self.workflow_populator.invocation_to_request(first_invocation_id)
+        rerun_request["parameters"][c_index]["num_lines"] = "2"
+        rerun_request["use_cached_job"] = True
+        rerun_request["rerun_of_invocation_id"] = first_invocation_id
+        rerun_request["rerun_step_index"] = int(c_index)
+        rerun_invocation_id = invoke(rerun_request)
+
+        first_jobs = jobs_by_label(first_invocation_id)
+        unrelated_jobs = jobs_by_label(unrelated_invocation_id)
+        rerun_jobs = jobs_by_label(rerun_invocation_id)
+        for label in ("a", "b"):
+            assert not any(job["copied_from_job_id"] for job in unrelated_jobs[label])
+            copied_from = {job["copied_from_job_id"] for job in rerun_jobs[label]}
+            assert copied_from == {job["id"] for job in first_jobs[label]}, (
+                label,
+                copied_from,
+                {job["id"] for job in unrelated_jobs[label]},
+            )
+        assert not any(job["copied_from_job_id"] for job in rerun_jobs["c"]), rerun_jobs["c"]
+        first_c_ids = {job["id"] for job in first_jobs["c"]}
+        assert not first_c_ids & {job["id"] for job in rerun_jobs["c"]}
+        for job in rerun_jobs["c"]:
+            assert json.loads(job["params"]["num_lines"]) == "2"
+
+    @skip_without_tool("cat1")
+    def test_step_rerun_prefers_source_jobs_at_job_preparation(self, history_id: str):
+        # When the scheduling-time cache lookup misses because input names differ, the job is
+        # looked up again (names ignored) when it is prepared. That second lookup must prefer the
+        # source invocation's jobs too, not the newest equivalent job.
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_input: data
+steps:
+  a:
+    tool_id: cat1
+    in:
+      input1: the_input
+  b:
+    tool_id: cat1
+    in:
+      input1: a/out_file1
+""")
+        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n3\n", wait=True)
+        first_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"the_input": {"src": "hda", "id": hda["id"]}}),
+            "inputs_by": "name",
+        }
+
+        def invoke(request: dict) -> str:
+            return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+        def jobs_by_label(invocation_id: str) -> dict[str, dict]:
+            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
+            by_label = {}
+            for step in invocation["steps"]:
+                if step["jobs"]:
+                    assert len(step["jobs"]) == 1
+                    job = self.dataset_populator.get_job_details(step["jobs"][0]["id"], full=True).json()
+                    assert job["state"] == "ok", job
+                    by_label[step["workflow_step_label"]] = job
+            return by_label
+
+        first_invocation_id = invoke(first_request)
+        # A newer plain run creates newer original jobs equivalent to a and b.
+        unrelated_invocation_id = invoke(first_request)
+
+        # A renamed copy of the input shares the dataset but fails the scheduling-time name match.
+        copy_response = self._post(
+            f"histories/{history_id}/contents",
+            data={"content": hda["id"], "source": "hda", "type": "dataset"},
+            json=True,
+        )
+        self._assert_status_code_is(copy_response, 200)
+        renamed_copy = copy_response.json()
+        self.dataset_populator.rename_dataset(renamed_copy["id"], "renamed input")
+
+        rerun_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"the_input": {"src": "hda", "id": renamed_copy["id"]}}),
+            "inputs_by": "name",
+            "use_cached_job": True,
+            "rerun_of_invocation_id": first_invocation_id,
+        }
+        rerun_invocation_id = invoke(rerun_request)
+
+        first_jobs = jobs_by_label(first_invocation_id)
+        unrelated_jobs = jobs_by_label(unrelated_invocation_id)
+        rerun_jobs = jobs_by_label(rerun_invocation_id)
+        for label in ("a", "b"):
+            assert rerun_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], (
+                label,
+                rerun_jobs[label]["copied_from_job_id"],
+                unrelated_jobs[label]["id"],
+            )
+
+    @skip_without_tool("cat1")
     @skip_without_tool("text_repeat")
     def test_step_rerun_edits_value_inside_repeat(self, history_id: str):
         # Run-time overrides cannot change a repeat's cardinality, so the rerun keeps the two
@@ -9310,108 +9481,6 @@ steps:
             reused={"first_cat", "second_cat", "sibling_lines"},
             recomputed={"random_lines", "downstream_cat"},
         )
-
-    @skip_without_tool("cat1")
-    @skip_without_tool("random_lines1")
-    def test_step_rerun_from_request_reuses_unchanged_jobs(self, history_id: str):
-        # Edit one step's parameters on an exported invocation request and re-invoke with the
-        # job cache on: steps upstream of (and beside) the edited step reuse their jobs, the
-        # edited step and everything downstream of it get new jobs.
-        workflow_id = self.workflow_populator.upload_yaml_workflow("""
-class: GalaxyWorkflow
-inputs:
-  the_input: data
-steps:
-  first_cat:
-    tool_id: cat1
-    in:
-      input1: the_input
-  second_cat:
-    tool_id: cat1
-    in:
-      input1: first_cat/out_file1
-  random_lines:
-    tool_id: random_lines1
-    state:
-      num_lines: 3
-      seed_source:
-        seed_source_selector: set_seed
-        seed: asdf
-    in:
-      input: second_cat/out_file1
-  sibling_lines:
-    tool_id: random_lines1
-    state:
-      num_lines: 2
-      seed_source:
-        seed_source_selector: set_seed
-        seed: asdf
-    in:
-      input: first_cat/out_file1
-  downstream_cat:
-    tool_id: cat1
-    in:
-      input1: random_lines/out_file1
-""")
-        # Galaxy orders steps topologically on import, so resolve order indices by label.
-        workflow = self.workflow_populator.download_workflow(workflow_id)
-        order_index_by_label = {step["label"]: int(index) for index, step in workflow["steps"].items()}
-        edited_step = str(order_index_by_label["random_lines"])
-
-        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n3\n4\n5\n6\n", wait=True)
-        original_step_parameters = {
-            "num_lines": "4",
-            "seed_source|seed_source_selector": "set_seed",
-            "seed_source|seed": "asdf",
-        }
-        first_request = {
-            "history": f"hist_id={history_id}",
-            "inputs": json.dumps({"the_input": {"src": "hda", "id": hda["id"]}}),
-            "inputs_by": "name",
-            "parameters_normalized": True,
-            "parameters": json.dumps({edited_step: original_step_parameters}),
-        }
-        first_invocation_id = self.workflow_populator.invoke_workflow_and_wait(
-            workflow_id, request=first_request
-        ).json()["id"]
-
-        request = self.workflow_populator.invocation_to_request(first_invocation_id)
-        assert request["parameters"] == {edited_step: original_step_parameters}
-        assert request["parameters_normalized"] is True
-        assert request["instance"] is True
-
-        request["parameters"][edited_step]["num_lines"] = "2"
-        request["use_cached_job"] = True
-        second_invocation_id = self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()[
-            "id"
-        ]
-
-        def jobs_by_label(invocation_id: str) -> dict[str, dict]:
-            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
-            by_label = {}
-            for step in invocation["steps"]:
-                if step["jobs"]:
-                    assert len(step["jobs"]) == 1
-                    job = self.dataset_populator.get_job_details(step["jobs"][0]["id"], full=True).json()
-                    assert job["state"] == "ok", job
-                    by_label[step["workflow_step_label"]] = job
-            return by_label
-
-        first_jobs = jobs_by_label(first_invocation_id)
-        second_jobs = jobs_by_label(second_invocation_id)
-        all_tool_steps = {"first_cat", "second_cat", "random_lines", "sibling_lines", "downstream_cat"}
-        assert set(first_jobs) == set(second_jobs) == all_tool_steps
-        for job in first_jobs.values():
-            assert not job["copied_from_job_id"]
-
-        # upstream and sibling steps reuse the first run's jobs
-        for label in ("first_cat", "second_cat", "sibling_lines"):
-            assert second_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], second_jobs[label]
-        # the edited step and its downstream are new jobs
-        for label in ("random_lines", "downstream_cat"):
-            assert not second_jobs[label]["copied_from_job_id"], second_jobs[label]
-        assert json.loads(first_jobs["random_lines"]["params"]["num_lines"]) == "4"
-        assert json.loads(second_jobs["random_lines"]["params"]["num_lines"]) == "2"
 
     @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")

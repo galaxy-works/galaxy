@@ -10626,6 +10626,79 @@ class WorkflowInvocation(Base, UsesCreateAndUpdateTime, Dictifiable, Serializabl
 
         return _resource_parameters
 
+    @property
+    def rerun_of_invocation_id(self) -> int | None:
+        meta_type = WorkflowRequestInputParameter.types.META_PARAMETERS
+        for input_parameter in self.input_parameters:
+            if input_parameter.type == meta_type and input_parameter.name == "rerun_of_invocation_id":
+                return int(input_parameter.value) if input_parameter.value else None
+        return None
+
+    def root_invocation(self) -> "WorkflowInvocation":
+        session = required_object_session(self)
+        invocation = self
+        while True:
+            parent = session.scalars(
+                select(WorkflowInvocation)
+                .join(
+                    WorkflowInvocationToSubworkflowInvocationAssociation,
+                    WorkflowInvocationToSubworkflowInvocationAssociation.workflow_invocation_id
+                    == WorkflowInvocation.id,
+                )
+                .where(WorkflowInvocationToSubworkflowInvocationAssociation.subworkflow_invocation_id == invocation.id)
+            ).first()
+            if parent is None:
+                return invocation
+            invocation = parent
+
+    def original_job_ids(self) -> frozenset[int]:
+        """Ids of the original jobs behind this invocation's steps, subworkflows and mapped-over steps included."""
+        session = required_object_session(self)
+        invocation_ids = [self.id]
+        frontier = [self.id]
+        while frontier:
+            frontier = list(
+                session.scalars(
+                    select(WorkflowInvocationToSubworkflowInvocationAssociation.subworkflow_invocation_id).where(
+                        WorkflowInvocationToSubworkflowInvocationAssociation.workflow_invocation_id.in_(frontier),
+                        WorkflowInvocationToSubworkflowInvocationAssociation.subworkflow_invocation_id.isnot(None),
+                    )
+                )
+            )
+            invocation_ids.extend(frontier)
+        step_job_ids = select(WorkflowInvocationStep.job_id).where(
+            WorkflowInvocationStep.workflow_invocation_id.in_(invocation_ids),
+            WorkflowInvocationStep.job_id.isnot(None),
+        )
+        mapped_job_ids = (
+            select(ImplicitCollectionJobsJobAssociation.job_id)
+            .join(
+                WorkflowInvocationStep,
+                WorkflowInvocationStep.implicit_collection_jobs_id
+                == ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id,
+            )
+            .where(WorkflowInvocationStep.workflow_invocation_id.in_(invocation_ids))
+        )
+        # The job cache only ever returns original jobs, so map copies back to what they were copied from.
+        stmt = select(func.coalesce(Job.copied_from_job_id, Job.id)).where(
+            or_(Job.id.in_(step_job_ids), Job.id.in_(mapped_job_ids))
+        )
+        return frozenset(session.scalars(stmt))
+
+    def rerun_source_job_ids(self) -> frozenset[int] | None:
+        """Original job ids of the invocation this one (or its root, for a subworkflow) reruns.
+
+        The job cache tries these first, otherwise it picks the newest equivalent job, whose outputs
+        may be different dataset rows than the ones the source invocation's downstream steps consumed.
+        """
+        rerun_of_invocation_id = self.root_invocation().rerun_of_invocation_id
+        if rerun_of_invocation_id is None:
+            return None
+        source = required_object_session(self).get(WorkflowInvocation, rerun_of_invocation_id)
+        if source is None:
+            return None
+        return source.original_job_ids()
+
     def has_input_for_step(self, step_id):
         for content in self.input_datasets:
             if content.workflow_step_id == step_id:
