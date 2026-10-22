@@ -18562,6 +18562,16 @@ export interface components {
              */
             require_exact_tool_versions: boolean | null;
             /**
+             * Rerun of invocation
+             * @description The invocation this one reruns. When the job cache is used, equivalent jobs from that invocation are preferred over newer ones so unchanged steps keep consuming the same datasets.
+             */
+            rerun_of_invocation_id?: string | null;
+            /**
+             * Rerun step index
+             * @description Order index of the step that was edited for this rerun, recorded for provenance only.
+             */
+            rerun_step_index?: number | null;
+            /**
              * Resource Parameters
              * @description If a workflow_resource_params_file file is defined and the target workflow is configured to consumer resource parameters, they can be specified with this parameter. See https://github.com/galaxyproject/galaxy/pull/4830 for more information.
              */
@@ -28987,6 +28997,16 @@ export interface components {
             replacement_params?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Rerun of invocation
+             * @description Encoded id. The invocation this one reruns. When the job cache is used, equivalent jobs from that invocation are preferred over newer ones so unchanged steps keep consuming the same datasets.
+             */
+            rerun_of_invocation_id?: string | null;
+            /**
+             * Rerun step index
+             * @description Order index of the step that was edited for this rerun, recorded for provenance only.
+             */
+            rerun_step_index?: number | null;
             /**
              * Resource Parameters
              * @description If a workflow_resource_params_file file is defined and the target workflow is configured to consumer resource parameters, they can be specified with this parameter. See https://github.com/galaxyproject/galaxy/pull/4830 for more information.
