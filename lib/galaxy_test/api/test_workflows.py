@@ -1,4 +1,5 @@
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -8837,6 +8838,137 @@ steps:
             assert not second_jobs[label]["copied_from_job_id"], second_jobs[label]
         assert json.loads(first_jobs["random_lines"]["params"]["num_lines"]) == "4"
         assert json.loads(second_jobs["random_lines"]["params"]["num_lines"]) == "2"
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_prefers_jobs_from_source_invocation(self, history_id: str):
+        # A rerun that names its source invocation should reuse that invocation's jobs even when
+        # newer equivalent jobs exist (e.g. the same workflow run again without the cache). The
+        # newest-first cache would otherwise pick a job whose outputs are different dataset rows,
+        # so nothing downstream would match the source invocation's jobs.
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_input: data
+steps:
+  a:
+    tool_id: cat1
+    in:
+      input1: the_input
+  b:
+    tool_id: cat1
+    in:
+      input1: a/out_file1
+  c:
+    tool_id: random_lines1
+    state:
+      num_lines: 3
+      seed_source:
+        seed_source_selector: set_seed
+        seed: asdf
+    in:
+      input: b/out_file1
+  d:
+    tool_id: random_lines1
+    state:
+      num_lines: 2
+      seed_source:
+        seed_source_selector: set_seed
+        seed: asdf
+    in:
+      input: c/out_file1
+""")
+        workflow = self.workflow_populator.download_workflow(workflow_id)
+        order_index_by_label = {step["label"]: int(index) for index, step in workflow["steps"].items()}
+        c_index = str(order_index_by_label["c"])
+        d_index = str(order_index_by_label["d"])
+
+        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n3\n4\n5\n6\n", wait=True)
+        first_request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps({"the_input": {"src": "hda", "id": hda["id"]}}),
+            "inputs_by": "name",
+            "parameters_normalized": True,
+            "parameters": json.dumps(
+                {
+                    c_index: {
+                        "num_lines": "4",
+                        "seed_source|seed_source_selector": "set_seed",
+                        "seed_source|seed": "asdf",
+                    }
+                }
+            ),
+        }
+
+        def invoke(request: dict) -> str:
+            return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+        def jobs_by_label(invocation_id: str) -> dict[str, dict]:
+            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
+            by_label = {}
+            for step in invocation["steps"]:
+                if step["jobs"]:
+                    assert len(step["jobs"]) == 1
+                    job = self.dataset_populator.get_job_details(step["jobs"][0]["id"], full=True).json()
+                    assert job["state"] == "ok", job
+                    by_label[step["workflow_step_label"]] = job
+            return by_label
+
+        first_invocation_id = invoke(first_request)
+        first_request_export = self.workflow_populator.invocation_to_request(first_invocation_id)
+
+        # Rerun editing c, naming the first invocation as the source.
+        second_request = copy.deepcopy(first_request_export)
+        second_request["parameters"][c_index]["num_lines"] = "2"
+        second_request["use_cached_job"] = True
+        second_request["rerun_of_invocation_id"] = first_invocation_id
+        second_request["rerun_step_index"] = int(c_index)
+        second_invocation_id = invoke(second_request)
+
+        first_jobs = jobs_by_label(first_invocation_id)
+        second_jobs = jobs_by_label(second_invocation_id)
+        for label in ("a", "b"):
+            assert second_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], second_jobs[label]
+        for label in ("c", "d"):
+            assert not second_jobs[label]["copied_from_job_id"], second_jobs[label]
+
+        # Run the workflow again plainly, creating newer original jobs equivalent to a and b.
+        unrelated_invocation_id = invoke(first_request)
+        unrelated_jobs = jobs_by_label(unrelated_invocation_id)
+        for label in ("a", "b"):
+            assert not unrelated_jobs[label]["copied_from_job_id"], unrelated_jobs[label]
+
+        # Rerun the second invocation editing d.
+        second_request_export = self.workflow_populator.invocation_to_request(second_invocation_id)
+        third_request = copy.deepcopy(second_request_export)
+        third_request["parameters"][d_index] = {
+            "num_lines": "1",
+            "seed_source|seed_source_selector": "set_seed",
+            "seed_source|seed": "asdf",
+        }
+        third_request["rerun_of_invocation_id"] = second_invocation_id
+        third_request["rerun_step_index"] = int(d_index)
+        third_invocation_id = invoke(third_request)
+
+        third_jobs = jobs_by_label(third_invocation_id)
+        # a and b resolve to the first invocation's originals, not the newer unrelated ones
+        for label in ("a", "b"):
+            assert third_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], (
+                label,
+                third_jobs[label]["copied_from_job_id"],
+                unrelated_jobs[label]["id"],
+            )
+        assert third_jobs["c"]["copied_from_job_id"] == second_jobs["c"]["id"], third_jobs["c"]
+        assert not third_jobs["d"]["copied_from_job_id"], third_jobs["d"]
+
+        # Lineage round-trips through the request export and is absent on a plain invocation.
+        assert first_request_export.get("rerun_of_invocation_id") is None
+        assert first_request_export.get("rerun_step_index") is None
+        assert second_request_export["rerun_of_invocation_id"] == first_invocation_id
+        assert second_request_export["rerun_step_index"] == int(c_index)
+        third_request_export = self.workflow_populator.invocation_to_request(third_invocation_id)
+        assert third_request_export["rerun_of_invocation_id"] == second_invocation_id
+        assert third_request_export["rerun_step_index"] == int(d_index)
 
     @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
