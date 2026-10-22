@@ -58,6 +58,16 @@ UseCachedJobField = Field(
     title="Use cached job",
     description="Indicated whether to use a cached job for workflow invocation.",
 )
+RERUN_OF_INVOCATION_ID_TITLE = "Rerun of invocation"
+RERUN_OF_INVOCATION_ID_DESCRIPTION = (
+    "The invocation this one reruns. When the job cache is used, equivalent jobs from that invocation are "
+    "preferred over newer ones so unchanged steps keep consuming the same datasets."
+)
+RerunStepIndexField = Field(
+    None,
+    title="Rerun step index",
+    description="Order index of the step that was edited for this rerun, recorded for provenance only.",
+)
 PreferredObjectStoreIdField = Field(
     default=None,
     title="Preferred Object Store ID",
@@ -152,6 +162,12 @@ class InvokeWorkflowPayload(GetTargetHistoryPayload):
         description="The UUID of the workflow landing request associated with this invocation.",
     )
     use_cached_job: bool | None = UseCachedJobField
+    rerun_of_invocation_id: DecodedDatabaseIdField | None = Field(
+        None,
+        title=RERUN_OF_INVOCATION_ID_TITLE,
+        description=RERUN_OF_INVOCATION_ID_DESCRIPTION,
+    )
+    rerun_step_index: int | None = RerunStepIndexField
     parameters_normalized: bool | None = Field(
         False,
         title=STEP_PARAMETERS_NORMALIZED_TITLE,

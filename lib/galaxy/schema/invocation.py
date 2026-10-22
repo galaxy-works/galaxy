@@ -53,6 +53,9 @@ from .workflows import (
     PreferredObjectStoreIdField,
     PreferredOutputsObjectStoreIdField,
     ReplacementParametersField,
+    RERUN_OF_INVOCATION_ID_DESCRIPTION,
+    RERUN_OF_INVOCATION_ID_TITLE,
+    RerunStepIndexField,
     ResourceParametersField,
     STEP_PARAMETERS_DESCRIPTION,
     STEP_PARAMETERS_NORMALIZED_DESCRIPTION,
@@ -633,6 +636,12 @@ class WorkflowInvocationRequestModel(Model):
     replacement_params: dict[str, Any] | None = ReplacementParametersField
     resource_params: dict[str, Any] | None = ResourceParametersField
     use_cached_job: bool = UseCachedJobField
+    rerun_of_invocation_id: str | None = Field(
+        None,
+        title=RERUN_OF_INVOCATION_ID_TITLE,
+        description=f"Encoded id. {RERUN_OF_INVOCATION_ID_DESCRIPTION}",
+    )
+    rerun_step_index: int | None = RerunStepIndexField
     preferred_object_store_id: str | None = PreferredObjectStoreIdField
     preferred_intermediate_object_store_id: str | None = PreferredIntermediateObjectStoreIdField
     preferred_outputs_object_store_id: str | None = PreferredOutputsObjectStoreIdField
