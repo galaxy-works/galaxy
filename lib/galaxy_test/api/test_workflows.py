@@ -135,6 +135,13 @@ steps:
 """
 
 
+STEP_RERUN_RANDOM_LINES_PARAMETERS = {
+    "num_lines": "4",
+    "seed_source|seed_source_selector": "set_seed",
+    "seed_source|seed": "asdf",
+}
+
+
 class BaseWorkflowsApiTestCase(ApiTestCase, RunsWorkflowFixtures):
     # TODO: Find a new file for this class.
     dataset_populator: DatasetPopulator
@@ -8623,12 +8630,62 @@ input1:
         cached_output = self.dataset_populator.get_history_dataset_details(history_id=history_id, hid=3)
         assert not cached_output["visible"], f"Expected output to be hidden with cached job: {cached_output}"
 
-    @skip_without_tool("cat1")
-    @skip_without_tool("random_lines1")
-    def test_step_rerun_from_request_reuses_unchanged_jobs(self, history_id: str):
-        # Edit one step's parameters on an exported invocation request and re-invoke with the
-        # job cache on: steps upstream of (and beside) the edited step reuse their jobs, the
-        # edited step and everything downstream of it get new jobs.
+    def _step_rerun_order_indices(self, workflow_id: str) -> dict[str, str]:
+        # Galaxy orders steps topologically on import, so resolve order indices by label.
+        workflow = self.workflow_populator.download_workflow(workflow_id)
+        return {step["label"]: str(index) for index, step in workflow["steps"].items()}
+
+    def _step_rerun_invoke(self, workflow_id: str, history_id: str, inputs: dict, parameters: dict) -> str:
+        request = {
+            "history": f"hist_id={history_id}",
+            "inputs": json.dumps(inputs),
+            "inputs_by": "name",
+            "parameters_normalized": True,
+            "parameters": json.dumps(parameters),
+        }
+        return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+    def _step_rerun_from_request(
+        self, invocation_id: str, workflow_id: str, edited_step: str, updates: dict, **request_updates
+    ) -> str:
+        # Export the invocation's request, change one step's bag, re-invoke with the job cache on.
+        request = self.workflow_populator.invocation_to_request(invocation_id)
+        request["parameters"][edited_step].update(updates)
+        request["use_cached_job"] = True
+        request.update(request_updates)
+        return self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()["id"]
+
+    def _step_rerun_jobs(self, invocation_id: str) -> dict[str, list[dict]]:
+        invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
+        by_label = {}
+        for step in invocation["steps"]:
+            if step["jobs"]:
+                jobs = [self.dataset_populator.get_job_details(job["id"], full=True).json() for job in step["jobs"]]
+                for job in jobs:
+                    assert job["state"] == "ok", job
+                by_label[step["workflow_step_label"]] = jobs
+        return by_label
+
+    def _step_rerun_single_jobs(self, invocation_id: str) -> dict[str, dict]:
+        by_label = self._step_rerun_jobs(invocation_id)
+        for label, jobs in by_label.items():
+            assert len(jobs) == 1, (label, jobs)
+        return {label: jobs[0] for label, jobs in by_label.items()}
+
+    def _assert_step_rerun_reuse(
+        self, first_jobs: dict[str, dict], rerun_jobs: dict[str, dict], reused: set[str], recomputed: set[str]
+    ):
+        assert set(first_jobs) == set(rerun_jobs) == reused | recomputed
+        for job in first_jobs.values():
+            assert not job["copied_from_job_id"], job
+        for label in reused:
+            assert rerun_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], rerun_jobs[label]
+        for label in recomputed:
+            assert not rerun_jobs[label]["copied_from_job_id"], rerun_jobs[label]
+
+    def _step_rerun_chain_setup(self, history_id: str) -> tuple[str, str, str]:
+        # the_input -> first_cat -> second_cat -> random_lines -> downstream_cat, with sibling_lines
+        # hanging off first_cat; the first invocation sets random_lines to num_lines=4 at run time.
         workflow_id = self.workflow_populator.upload_yaml_workflow("""
 class: GalaxyWorkflow
 inputs:
@@ -8665,63 +8722,41 @@ steps:
     in:
       input1: random_lines/out_file1
 """)
-        # Galaxy orders steps topologically on import, so resolve order indices by label.
-        workflow = self.workflow_populator.download_workflow(workflow_id)
-        order_index_by_label = {step["label"]: int(index) for index, step in workflow["steps"].items()}
-        edited_step = str(order_index_by_label["random_lines"])
-
+        edited_step = self._step_rerun_order_indices(workflow_id)["random_lines"]
         hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n3\n4\n5\n6\n", wait=True)
-        original_step_parameters = {
-            "num_lines": "4",
-            "seed_source|seed_source_selector": "set_seed",
-            "seed_source|seed": "asdf",
-        }
-        first_request = {
-            "history": f"hist_id={history_id}",
-            "inputs": json.dumps({"the_input": {"src": "hda", "id": hda["id"]}}),
-            "inputs_by": "name",
-            "parameters_normalized": True,
-            "parameters": json.dumps({edited_step: original_step_parameters}),
-        }
-        first_invocation_id = self.workflow_populator.invoke_workflow_and_wait(
-            workflow_id, request=first_request
-        ).json()["id"]
+        first_invocation_id = self._step_rerun_invoke(
+            workflow_id,
+            history_id,
+            {"the_input": {"src": "hda", "id": hda["id"]}},
+            {edited_step: dict(STEP_RERUN_RANDOM_LINES_PARAMETERS)},
+        )
+        return workflow_id, edited_step, first_invocation_id
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("random_lines1")
+    def test_step_rerun_from_request_reuses_unchanged_jobs(self, history_id: str):
+        # Edit one step's parameters on an exported invocation request and re-invoke with the
+        # job cache on: steps upstream of (and beside) the edited step reuse their jobs, the
+        # edited step and everything downstream of it get new jobs.
+        workflow_id, edited_step, first_invocation_id = self._step_rerun_chain_setup(history_id)
 
         request = self.workflow_populator.invocation_to_request(first_invocation_id)
-        assert request["parameters"] == {edited_step: original_step_parameters}
+        assert request["parameters"] == {edited_step: STEP_RERUN_RANDOM_LINES_PARAMETERS}
         assert request["parameters_normalized"] is True
         assert request["instance"] is True
 
-        request["parameters"][edited_step]["num_lines"] = "2"
-        request["use_cached_job"] = True
-        second_invocation_id = self.workflow_populator.invoke_workflow_and_wait(workflow_id, request=request).json()[
-            "id"
-        ]
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"num_lines": "2"}
+        )
 
-        def jobs_by_label(invocation_id: str) -> dict[str, dict]:
-            invocation = self.workflow_populator.get_invocation(invocation_id, step_details=True)
-            by_label = {}
-            for step in invocation["steps"]:
-                if step["jobs"]:
-                    assert len(step["jobs"]) == 1
-                    job = self.dataset_populator.get_job_details(step["jobs"][0]["id"], full=True).json()
-                    assert job["state"] == "ok", job
-                    by_label[step["workflow_step_label"]] = job
-            return by_label
-
-        first_jobs = jobs_by_label(first_invocation_id)
-        second_jobs = jobs_by_label(second_invocation_id)
-        all_tool_steps = {"first_cat", "second_cat", "random_lines", "sibling_lines", "downstream_cat"}
-        assert set(first_jobs) == set(second_jobs) == all_tool_steps
-        for job in first_jobs.values():
-            assert not job["copied_from_job_id"]
-
-        # upstream and sibling steps reuse the first run's jobs
-        for label in ("first_cat", "second_cat", "sibling_lines"):
-            assert second_jobs[label]["copied_from_job_id"] == first_jobs[label]["id"], second_jobs[label]
-        # the edited step and its downstream are new jobs
-        for label in ("random_lines", "downstream_cat"):
-            assert not second_jobs[label]["copied_from_job_id"], second_jobs[label]
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs,
+            second_jobs,
+            reused={"first_cat", "second_cat", "sibling_lines"},
+            recomputed={"random_lines", "downstream_cat"},
+        )
         assert json.loads(first_jobs["random_lines"]["params"]["num_lines"]) == "4"
         assert json.loads(second_jobs["random_lines"]["params"]["num_lines"]) == "2"
 
@@ -8855,6 +8890,104 @@ steps:
         third_request_export = self.workflow_populator.invocation_to_request(third_invocation_id)
         assert third_request_export["rerun_of_invocation_id"] == second_invocation_id
         assert third_request_export["rerun_step_index"] == int(d_index)
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("text_repeat")
+    def test_step_rerun_edits_value_inside_repeat(self, history_id: str):
+        # Run-time overrides cannot change a repeat's cardinality, so the rerun keeps the two
+        # saved instances and only changes the text inside the second one.
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_input: data
+steps:
+  first_cat:
+    tool_id: cat1
+    in:
+      input1: the_input
+  repeat_text:
+    tool_id: text_repeat
+    state:
+      the_repeat:
+        - texttest: saved_a
+        - texttest: saved_b
+  downstream_cat:
+    tool_id: cat1
+    in:
+      input1: repeat_text/out_file1
+""")
+        edited_step = self._step_rerun_order_indices(workflow_id)["repeat_text"]
+        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n", wait=True)
+        first_invocation_id = self._step_rerun_invoke(
+            workflow_id,
+            history_id,
+            {"the_input": {"src": "hda", "id": hda["id"]}},
+            {edited_step: {"the_repeat_0|texttest": "alpha", "the_repeat_1|texttest": "beta"}},
+        )
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"the_repeat_1|texttest": "gamma"}
+        )
+
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs, second_jobs, reused={"first_cat"}, recomputed={"repeat_text", "downstream_cat"}
+        )
+        # text_repeat writes to its working directory without from_work_dir, so its output is
+        # empty; the job parameters are where the repeat values show up.
+        for jobs, expected in ((first_jobs, ["alpha", "beta"]), (second_jobs, ["alpha", "gamma"])):
+            the_repeat = json.loads(jobs["repeat_text"]["params"]["the_repeat"])
+            assert [instance["texttest"] for instance in the_repeat] == expected, the_repeat
+
+    @skip_without_tool("cat1")
+    @skip_without_tool("section")
+    def test_step_rerun_edits_section_parameter(self, history_id: str):
+        workflow_id = self.workflow_populator.upload_yaml_workflow("""
+class: GalaxyWorkflow
+inputs:
+  the_input: data
+steps:
+  first_cat:
+    tool_id: cat1
+    in:
+      input1: the_input
+  section_step:
+    tool_id: section
+    state:
+      int:
+        inttest: 3
+      float:
+        floattest: 1.5
+  downstream_cat:
+    tool_id: cat1
+    in:
+      input1: section_step/out_file1
+""")
+        edited_step = self._step_rerun_order_indices(workflow_id)["section_step"]
+        hda = self.dataset_populator.new_dataset(history_id, content="1\n2\n", wait=True)
+        original_step_parameters = {"int|inttest": "5", "float|floattest": "2.5"}
+        first_invocation_id = self._step_rerun_invoke(
+            workflow_id,
+            history_id,
+            {"the_input": {"src": "hda", "id": hda["id"]}},
+            {edited_step: original_step_parameters},
+        )
+        request = self.workflow_populator.invocation_to_request(first_invocation_id)
+        assert request["parameters"] == {edited_step: original_step_parameters}
+        second_invocation_id = self._step_rerun_from_request(
+            first_invocation_id, workflow_id, edited_step, {"int|inttest": "7"}
+        )
+
+        first_jobs = self._step_rerun_single_jobs(first_invocation_id)
+        second_jobs = self._step_rerun_single_jobs(second_invocation_id)
+        self._assert_step_rerun_reuse(
+            first_jobs, second_jobs, reused={"first_cat"}, recomputed={"section_step", "downstream_cat"}
+        )
+        for jobs, expected in ((first_jobs, "5\n2.5\n"), (second_jobs, "7\n2.5\n")):
+            content = self.dataset_populator.get_history_dataset_content(
+                history_id, dataset_id=jobs["downstream_cat"]["outputs"]["out_file1"]["id"]
+            )
+            assert content == expected
 
     @skip_without_tool("cat1")
     @skip_without_tool("identifier_multiple")
