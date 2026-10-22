@@ -170,6 +170,9 @@ async function onRerun() {
         parameters_normalized: true,
         instance: true,
         require_exact_tool_versions: false,
+        // Lets the job cache prefer the source invocation's jobs, and the new invocation link back to it.
+        rerun_of_invocation_id: props.invocationId,
+        rerun_step_index: props.stepIndex,
     };
     submitting.value = true;
     submitError.value = "";
