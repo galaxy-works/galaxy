@@ -134,6 +134,32 @@ steps:
 """
 
 
+DYNAMIC_SELECT_WORKFLOW = """
+class: GalaxyWorkflow
+inputs:
+  input1:
+    type: data
+    format: tabular
+steps:
+  column_step:
+    tool_id: column_param
+    in:
+      input1: input1
+  select_step:
+    tool_id: select_from_dataset
+    in:
+      single: input1
+"""
+
+
+def _step_by_label(steps, label, key="label"):
+    return next(step for step in steps if step.get(key) == label)
+
+
+def _input_by_name(inputs, name):
+    return next(i for i in inputs if i["name"] == name)
+
+
 class BaseWorkflowsApiTestCase(ApiTestCase, RunsWorkflowFixtures):
     # TODO: Find a new file for this class.
     dataset_populator: DatasetPopulator
@@ -3284,6 +3310,71 @@ steps:
     def test_runtime_data_column_parameter(self):
         with self.dataset_populator.test_history() as history_id:
             self._run_workflow_with_runtime_data_column_parameter(history_id)
+
+    @skip_without_tool("column_param")
+    @skip_without_tool("select_from_dataset")
+    def test_dynamic_select_options_empty_in_editor_when_data_ref_connected(self):
+        workflow_id = self.workflow_populator.upload_yaml_workflow(DYNAMIC_SELECT_WORKFLOW)
+        editor = self._download_workflow(workflow_id, style="editor")
+        column_step = _step_by_label(editor["steps"].values(), "column_step")
+        col = _input_by_name(column_step["config_form"]["inputs"], "col")
+        assert col["options"] == []
+        assert col["textable"] is True
+        assert col["data_ref"] == "input1"
+        select_step = _step_by_label(editor["steps"].values(), "select_step")
+        select_single = _input_by_name(select_step["config_form"]["inputs"], "select_single")
+        assert select_single["options"] == []
+        assert select_single["textable"] is True
+
+    @skip_without_tool("column_param")
+    @skip_without_tool("select_from_dataset")
+    def test_dynamic_select_options_empty_in_run_form_until_dataset_chosen(self):
+        workflow_id = self.workflow_populator.upload_yaml_workflow(DYNAMIC_SELECT_WORKFLOW)
+        with self.dataset_populator.test_history() as history_id:
+            hda = self.dataset_populator.new_dataset(
+                history_id, content="a\tb\tc\n1\t2\t3\n", file_type="tabular", wait=True
+            )
+            run_form = self._download_workflow(workflow_id, style="run", history_id=history_id)
+            column_step = _step_by_label(run_form["steps"], "column_step", key="step_label")
+            col = _input_by_name(column_step["inputs"], "col")
+            assert col["options"] == []
+            assert col["textable"] is True
+            select_step = _step_by_label(run_form["steps"], "select_step", key="step_label")
+            select_single = _input_by_name(select_step["inputs"], "select_single")
+            assert select_single["options"] == []
+
+            # The run form refetches the step through tools/{id}/build once the runner picks a dataset.
+            built = self.dataset_populator.build_tool_state(
+                "column_param", history_id, inputs={"input1": {"values": [{"src": "hda", "id": hda["id"]}]}}
+            )
+            col = _input_by_name(built["inputs"], "col")
+            assert [option[1] for option in col["options"]] == ["1", "2", "3"]
+            assert col["textable"] is False
+            built = self.dataset_populator.build_tool_state(
+                "select_from_dataset", history_id, inputs={"single": {"values": [{"src": "hda", "id": hda["id"]}]}}
+            )
+            select_single = _input_by_name(built["inputs"], "select_single")
+            assert [option[1] for option in select_single["options"]] == ["a", "1"]
+
+    @skip_without_tool("column_param")
+    @skip_without_tool("select_from_dataset")
+    def test_dynamic_select_options_empty_when_data_ref_not_ready(self):
+        with self.dataset_populator.test_history() as history_id:
+            content = base64.b64encode(b"a\tb\tc\n1\t2\t3\n").decode()
+            hda = self.dataset_populator.create_deferred_hda(history_id, f"base64://{content}", ext="tabular")
+            assert hda["state"] != "ok"
+            built = self.dataset_populator.build_tool_state(
+                "column_param", history_id, inputs={"input1": {"values": [{"src": "hda", "id": hda["id"]}]}}
+            )
+            col = _input_by_name(built["inputs"], "col")
+            assert col["options"] == []
+            assert col["textable"] is True
+            built = self.dataset_populator.build_tool_state(
+                "select_from_dataset", history_id, inputs={"single": {"values": [{"src": "hda", "id": hda["id"]}]}}
+            )
+            select_single = _input_by_name(built["inputs"], "select_single")
+            assert select_single["options"] == []
+            assert select_single["textable"] is True
 
     @skip_without_tool("mapper")
     @skip_without_tool("pileup")
