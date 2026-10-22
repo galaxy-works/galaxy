@@ -480,6 +480,11 @@ class TestMappings(BaseModelTestCase):
         # Only the root invocation records the rerun source, a subworkflow invocation finds it there.
         assert rerun_subworkflow_invocation.rerun_source_job_ids() == expected
         assert source.rerun_source_job_ids() is None
+        # Narrowed to one step, wherever that step sits in the subworkflow tree.
+        assert rerun.rerun_source_job_ids(tool_step.id) == {original_job.id}
+        assert rerun.rerun_source_job_ids(mapped_step.id) == {job.id for job in mapped_jobs}
+        assert rerun_subworkflow_invocation.rerun_source_job_ids(child_step.id) == {subworkflow_job.id}
+        assert rerun.rerun_source_job_ids(subworkflow_step.id) == set()
 
     def test_workflows(self):
         user = model.User(email=random_email(), password="password")

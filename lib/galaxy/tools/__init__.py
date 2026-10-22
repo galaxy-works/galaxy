@@ -284,6 +284,7 @@ from .execute import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
     from sqlalchemy.orm.scoping import scoped_session
 
     from galaxy.app import UniverseApplication
@@ -2316,7 +2317,7 @@ class Tool(AbstractTool, UsesDictVisibleKeys, MaybeToolParameterBundle):
         trans: "ProvidesUserContext",
         use_cached_job: bool,
         all_params: list[ToolStateJobInstancePopulatedT],
-        preferred_job_ids: Collection[int] | None = None,
+        preferred_job_ids: "Collection[int] | Select[tuple[int]] | None" = None,
     ) -> dict[int, Job | None]:
         completed_jobs: dict[int, Job | None] = {}
         for i, param in enumerate(all_params):
