@@ -404,7 +404,8 @@ export default class Filtering<T> {
      * has no such shape (i.e. it is raw text).
      */
     private splitKeyOpValue(pair: string): { field: string; op: ":" | ">" | "<"; value: string } | null {
-        const match = /(\S+)([:><])(.+)/g.exec(pair);
+        // keys never contain an operator, so stop at the first one -- values may (`tag:project:lung`)
+        const match = /([^\s:><]+)([:><])(.+)/g.exec(pair);
         if (!match) {
             return null;
         }
