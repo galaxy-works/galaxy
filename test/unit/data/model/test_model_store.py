@@ -486,6 +486,75 @@ def test_import_export_invocation():
     import_model_store.perform_import(history=h2)
 
 
+def test_import_export_invocation_relinks_rerun_source():
+    app = _mock_app()
+    source = _setup_invocation(app)
+    rerun = _rerun_invocation_of(app, source)
+    temp_directory = mkdtemp()
+    with store.DirectoryModelExportStore(temp_directory, app=app) as export_store:
+        export_store.export_workflow_invocation(source)
+        export_store.export_workflow_invocation(rerun)
+
+    imported = _import_invocations(app, temp_directory, source.user)
+    assert len(imported) == 2
+    imported_rerun = next(invocation for invocation in imported if invocation.rerun_of_invocation_id is not None)
+    imported_source = next(invocation for invocation in imported if invocation is not imported_rerun)
+    # The exported value was an id in the source database and must not survive the import as-is.
+    assert imported_rerun.rerun_of_invocation_id == imported_source.id
+    assert imported_source.id != source.id
+    assert _meta_parameter(imported_rerun, "rerun_step_index") == "1"
+
+
+def test_import_invocation_without_its_rerun_source_drops_the_link():
+    app = _mock_app()
+    source = _setup_invocation(app)
+    rerun = _rerun_invocation_of(app, source)
+    temp_directory = mkdtemp()
+    with store.DirectoryModelExportStore(temp_directory, app=app) as export_store:
+        export_store.export_workflow_invocation(rerun)
+
+    (imported_rerun,) = _import_invocations(app, temp_directory, source.user)
+    assert imported_rerun.rerun_of_invocation_id is None
+    assert _meta_parameter(imported_rerun, "rerun_step_index") == "1"
+
+
+def _rerun_invocation_of(app, source):
+    rerun = _invocation_for_workflow(source.user, source.workflow)
+    rerun.user = source.user
+    for name, value in (("rerun_of_invocation_id", str(source.id)), ("rerun_step_index", "1")):
+        rerun.input_parameters.append(
+            model.WorkflowRequestInputParameter(
+                name=name, value=value, type=model.WorkflowRequestInputParameter.types.META_PARAMETERS
+            )
+        )
+    app.add_and_commit(rerun)
+    return rerun
+
+
+def _import_invocations(app, temp_directory, user):
+    sa_session = app.model.context
+    h2 = model.History(user=user)
+    sa_session.add(h2)
+    app.commit()
+    import_model_store = store.get_import_model_store_for_directory(
+        temp_directory, app=app, user=user, import_options=store.ImportOptions()
+    )
+    import_model_store.perform_import(history=h2)
+    stmt = (
+        select(model.WorkflowInvocation)
+        .where(model.WorkflowInvocation.history_id == h2.id)
+        .order_by(model.WorkflowInvocation.id)
+    )
+    return list(sa_session.scalars(stmt))
+
+
+def _meta_parameter(invocation, name):
+    meta_type = model.WorkflowRequestInputParameter.types.META_PARAMETERS
+    values = [p.value for p in invocation.input_parameters if p.type == meta_type and p.name == name]
+    assert len(values) == 1, values
+    return values[0]
+
+
 def validate_crate_metadata(as_dict):
     assert as_dict["@context"] == "https://w3id.org/ro/crate/1.1/context"
 
