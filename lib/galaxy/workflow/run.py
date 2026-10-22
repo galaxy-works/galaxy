@@ -401,17 +401,6 @@ class ModuleInjector(Protocol):
         pass
 
 
-def _original_job_ids(invocation: WorkflowInvocation) -> set[int]:
-    # The cache only ever returns original jobs, so map copies back to what they were copied from.
-    job_ids = set()
-    for invocation_step in invocation.steps:
-        for job in invocation_step.jobs:
-            job_ids.add(job.copied_from_job_id or job.id)
-    for subworkflow_association in invocation.subworkflow_invocations:
-        job_ids |= _original_job_ids(subworkflow_association.subworkflow_invocation)
-    return job_ids
-
-
 def _is_filtered_tool_output(connection: "WorkflowStepConnection") -> bool:
     module = connection.output_step.module
     output_name = connection.output_name
@@ -470,7 +459,7 @@ class WorkflowProgress:
         source = self.module_injector.trans.sa_session.get(WorkflowInvocation, self.rerun_of_invocation_id)
         if source is None:
             return None
-        return frozenset(_original_job_ids(source))
+        return source.original_job_ids()
 
     @property
     def maximum_jobs_to_schedule_or_none(self) -> int | None:
