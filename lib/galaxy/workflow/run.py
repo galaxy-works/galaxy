@@ -47,6 +47,8 @@ from galaxy.workflow.run_request import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
+
     from galaxy.managers.context import ProvidesHistoryContext
     from galaxy.model import (
         Workflow,
@@ -424,7 +426,7 @@ class WorkflowProgress:
         subworkflow_collection_info=None,
         when_values=None,
         rerun_of_invocation_id: int | None = None,
-        preferred_cached_job_ids: frozenset[int] | None = None,
+        rerun_source_invocation: WorkflowInvocation | None = None,
     ) -> None:
         self.outputs: dict[int, Any] = {}
         self.tracked_dependencies: set[modules.SchedulingDependency] = set()
@@ -444,22 +446,25 @@ class WorkflowProgress:
         self.subworkflow_structure = subworkflow_collection_info.structure if subworkflow_collection_info else None
         self.when_values = when_values
         self.rerun_of_invocation_id = rerun_of_invocation_id
-        if preferred_cached_job_ids is not None:
-            self.preferred_cached_job_ids = preferred_cached_job_ids
+        if rerun_source_invocation is not None:
+            self.rerun_source_invocation = rerun_source_invocation
 
     @cached_property
-    def preferred_cached_job_ids(self) -> frozenset[int] | None:
-        """Original job ids from the invocation this one reruns, tried first by the job cache.
+    def rerun_source_invocation(self) -> WorkflowInvocation | None:
+        if self.rerun_of_invocation_id is None:
+            return None
+        return self.module_injector.trans.sa_session.get(WorkflowInvocation, self.rerun_of_invocation_id)
+
+    def preferred_cached_jobs_for_step(self, step: "WorkflowStep") -> "Select[tuple[int]] | None":
+        """Statement selecting the source invocation's jobs for ``step``, tried first by the job cache.
 
         Without this the cache picks the newest equivalent job, whose outputs may be different
         dataset rows than the ones the source invocation's downstream steps consumed.
         """
-        if self.rerun_of_invocation_id is None:
-            return None
-        source = self.module_injector.trans.sa_session.get(WorkflowInvocation, self.rerun_of_invocation_id)
+        source = self.rerun_source_invocation
         if source is None:
             return None
-        return source.original_job_ids()
+        return source.original_jobs_statement(step.id)
 
     @property
     def maximum_jobs_to_schedule_or_none(self) -> int | None:
@@ -909,7 +914,7 @@ class WorkflowProgress:
             replacement_dict=self.replacement_dict,
             subworkflow_collection_info=subworkflow_collection_info,
             when_values=when_values,
-            preferred_cached_job_ids=self.preferred_cached_job_ids,
+            rerun_source_invocation=self.rerun_source_invocation,
         )
 
     def raw_to_galaxy(self, value: dict):

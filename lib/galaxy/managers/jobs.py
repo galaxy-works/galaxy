@@ -491,11 +491,12 @@ class JobSearch:
         job_state: JobStatesT | None = (Job.states.OK,),
         history_id: int | None = None,
         require_name_match: bool = True,
-        preferred_job_ids: Collection[int] | None = None,
+        preferred_job_ids: "Collection[int] | Select[tuple[int]] | None" = None,
     ) -> Job | None:
         """Search for jobs producing same results using the 'inputs' part of a tool POST.
 
-        Candidates in ``preferred_job_ids`` are tried before the others, newest first in both groups.
+        Candidates in ``preferred_job_ids`` (ids, or a statement selecting them) are tried before the
+        others, newest first in both groups.
         """
         input_data: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -558,7 +559,7 @@ class JobSearch:
         wildcard_param_dump=None,
         history_id: int | None = None,
         require_name_match: bool = True,
-        preferred_job_ids: Collection[int] | None = None,
+        preferred_job_ids: "Collection[int] | Select[tuple[int]] | None" = None,
     ) -> Job | None:
         search_timer = ExecutionTimer()
 
@@ -782,7 +783,7 @@ class JobSearch:
         return stmt
 
     def _exclude_jobs_with_deleted_outputs(
-        self, stmt: "Select[tuple[int]]", preferred_job_ids: Collection[int] | None = None
+        self, stmt: "Select[tuple[int]]", preferred_job_ids: "Collection[int] | Select[tuple[int]] | None" = None
     ) -> "Select":
         subquery_alias = stmt.subquery("filtered_jobs_subquery")
         outer_select_columns = [subquery_alias.c[col.name] for col in stmt.selected_columns]
@@ -820,7 +821,7 @@ class JobSearch:
             unordered_results_cte = unordered_results_cte.prefix_with("MATERIALIZED")
         job_id_column = unordered_results_cte.c.job_id
         final_ordered_stmt = select(*unordered_results_cte.c).select_from(unordered_results_cte)
-        if preferred_job_ids:
+        if preferred_job_ids is not None:
             final_ordered_stmt = final_ordered_stmt.order_by(case((job_id_column.in_(preferred_job_ids), 0), else_=1))
         final_ordered_stmt = final_ordered_stmt.order_by(job_id_column.desc())
         return final_ordered_stmt
