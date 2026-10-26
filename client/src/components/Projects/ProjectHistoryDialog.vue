@@ -8,7 +8,7 @@ import { computed, ref, watch } from "vue";
 
 import { errorMessageAsString } from "@/utils/simple-error";
 
-import { projectTag } from "./projectTags";
+import { projectPathProblem, projectTag } from "./projectTags";
 import { childProjectPath, DEFAULT_HISTORY_NAME, useProjectActions } from "./useProjectActions";
 
 import GFormInput from "@/components/BaseComponents/Form/GFormInput.vue";
@@ -35,9 +35,15 @@ const historyName = ref("");
 const busy = ref(false);
 const errorMessage = ref<string>();
 
-const targetPath = computed(() =>
-    props.newProject ? childProjectPath(props.parentPath, projectName.value) : childProjectPath(props.parentPath, ""),
-);
+const problem = computed(() => (props.newProject ? projectPathProblem(projectName.value) : undefined));
+const targetPath = computed(() => {
+    if (problem.value) {
+        return "";
+    }
+    return props.newProject
+        ? childProjectPath(props.parentPath, projectName.value)
+        : childProjectPath(props.parentPath, "");
+});
 const title = computed(() => {
     if (!props.newProject) {
         return `New history in ${props.parentPath}`;
@@ -83,7 +89,7 @@ async function onOk() {
         ok-text="Create"
         :close-on-ok="false"
         :ok-disabled="!targetPath || busy"
-        ok-disabled-title="Enter a project name"
+        :ok-disabled-title="problem ?? 'Enter a project name'"
         :cancel-disabled="busy"
         @update:show="emit('update:show', $event)"
         @ok="onOk">
@@ -93,6 +99,9 @@ async function onOk() {
                 id="project-history-dialog-project"
                 v-model="projectName"
                 :placeholder="parentPath ? 'e.g. scrna' : 'e.g. lung'" />
+            <small v-if="problem" class="form-text text-danger" data-project-history-dialog-problem>{{
+                problem
+            }}</small>
         </div>
         <p class="small text-muted" data-project-history-dialog-help>
             <template v-if="newProject">A project is a tag; this creates a new history tagged </template>

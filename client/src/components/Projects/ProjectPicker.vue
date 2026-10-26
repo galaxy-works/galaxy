@@ -8,7 +8,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import { useProjectStore } from "@/stores/projectStore";
 
-import { normalizeProjectPath, projectTag } from "./projectTags";
+import { normalizeProjectPath, projectPathProblem, projectTag } from "./projectTags";
 
 import GFormInput from "@/components/BaseComponents/Form/GFormInput.vue";
 
@@ -36,7 +36,8 @@ const projectStore = useProjectStore();
 const { projectPaths } = storeToRefs(projectStore);
 
 const text = ref(props.modelValue);
-const normalized = computed(() => normalizeProjectPath(text.value ?? ""));
+const problem = computed(() => projectPathProblem(text.value ?? ""));
+const normalized = computed(() => (problem.value ? "" : normalizeProjectPath(text.value ?? "")));
 const sortedPaths = computed(() => [...projectPaths.value].sort((a, b) => a.localeCompare(b)));
 const isNew = computed(() => Boolean(normalized.value) && !projectPaths.value.includes(normalized.value));
 
@@ -70,7 +71,8 @@ onMounted(() => projectStore.fetch());
         <datalist :id="`${id}-paths`">
             <option v-for="path in sortedPaths" :key="path" :value="path" />
         </datalist>
-        <small v-if="normalized" class="form-text text-muted" data-project-picker-preview>
+        <small v-if="problem" class="form-text text-danger" data-project-picker-problem>{{ problem }}</small>
+        <small v-else-if="normalized" class="form-text text-muted" data-project-picker-preview>
             Tags with <code>{{ projectTag(normalized) }}</code>
             <span v-if="isNew">(new project)</span>
         </small>

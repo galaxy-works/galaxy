@@ -7,6 +7,7 @@ import {
     isWithinProject,
     normalizeProjectPath,
     PROJECT_TAG_NAME,
+    projectPathProblem,
     projectPathsOf,
     projectTag,
     tagListFilter,
@@ -60,6 +61,25 @@ describe("normalizeProjectPath", () => {
     it("returns an empty string when there is no path", () => {
         expect(normalizeProjectPath("")).toBe("");
         expect(normalizeProjectPath("///")).toBe("");
+    });
+});
+
+describe("projectPathProblem", () => {
+    it("accepts nested paths and lets normalization handle case and stray slashes", () => {
+        expect(projectPathProblem("lung/scrna")).toBeUndefined();
+        expect(projectPathProblem(" Lung / ScRNA/ ")).toBeUndefined();
+        expect(projectPathProblem("")).toBeUndefined();
+    });
+
+    it("rejects the tag grammar's reserved characters and quotes", () => {
+        for (const path of ["lung,brain", "lung;brain", "lung:v2", "o'brien", 'say "hi"']) {
+            expect(projectPathProblem(path)).toMatch(/can't contain/);
+        }
+    });
+
+    it("rejects inner whitespace but not padding", () => {
+        expect(projectPathProblem("lung cancer")).toMatch(/spaces/);
+        expect(projectPathProblem("  lung  ")).toBeUndefined();
     });
 });
 
