@@ -45,6 +45,26 @@ export function projectTag(path: string): string {
     return `${PROJECT_TAG_NAME}:${path}`;
 }
 
+/**
+ * The tag as the given items actually spell it for `path`. Quoted tag searches on the list
+ * pages are case-sensitive and exact, so the normalized path alone might match nothing.
+ */
+export function exactProjectTag(tagLists: Iterable<string[] | null | undefined>, path: string): string {
+    for (const tags of tagLists) {
+        for (const tag of tags ?? []) {
+            if (projectPathsOf([tag])[0] === path) {
+                return tag;
+            }
+        }
+    }
+    return projectTag(path);
+}
+
+/** A history or workflow list filter matching exactly this tag. */
+export function tagListFilter(tag: string): string {
+    return `tag:'${tag}'`;
+}
+
 /** True when `path` is `nodePath` itself or nested below it. */
 export function isWithinProject(path: string, nodePath: string): boolean {
     return path === nodePath || path.startsWith(`${nodePath}/`);

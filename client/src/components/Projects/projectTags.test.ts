@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
     buildProjectTree,
     countNodes,
+    exactProjectTag,
     isWithinProject,
     normalizeProjectPath,
     PROJECT_TAG_NAME,
     projectPathsOf,
     projectTag,
+    tagListFilter,
 } from "./projectTags";
 
 describe("projectPathsOf", () => {
@@ -136,5 +138,24 @@ describe("countNodes", () => {
         expect(countNodes([])).toBe(0);
         expect(countNodes(buildProjectTree(["lung/scrna"]))).toBe(2);
         expect(countNodes(buildProjectTree(["lung/scrna", "lung/bulk", "brain/a/b"]))).toBe(6);
+    });
+});
+
+describe("exactProjectTag", () => {
+    it("returns the first spelling an item uses for the path", () => {
+        expect(exactProjectTag([["qc"], ["Project:Lung/ScRNA", "project:lung"]], "lung/scrna")).toBe(
+            "Project:Lung/ScRNA",
+        );
+        expect(exactProjectTag([["project:lung/scrna"], ["project:Lung"]], "lung")).toBe("project:Lung");
+    });
+
+    it("falls back to the normalized tag when no item carries the path exactly", () => {
+        expect(exactProjectTag([["project:lung/scrna"], null, undefined], "lung")).toBe("project:lung");
+    });
+});
+
+describe("tagListFilter", () => {
+    it("quotes the tag so the whole name:value is matched", () => {
+        expect(tagListFilter("project:lung/scrna")).toBe("tag:'project:lung/scrna'");
     });
 });
