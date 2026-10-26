@@ -47,4 +47,12 @@ describe("ProjectPicker", () => {
         expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([""]);
         expect(wrapper.find("[data-project-picker-preview]").exists()).toBe(false);
     });
+
+    it("emits an empty path and explains why for a path the tag grammar can't carry", async () => {
+        const { wrapper } = mountPicker(["lung"]);
+        await wrapper.find("input").setValue("lung,brain");
+        expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([""]);
+        expect(wrapper.find("[data-project-picker-problem]").text()).toContain("can't contain");
+        expect(wrapper.find("[data-project-picker-preview]").exists()).toBe(false);
+    });
 });

@@ -41,6 +41,20 @@ export function normalizeProjectPath(path: string): string {
         .join("/");
 }
 
+/**
+ * Why a path can't be a project, or undefined when it can. Whitespace, `,` and `;` are reserved by
+ * the tag grammar, a `:` would split the tag's value, and quotes break the list pages' exact filter.
+ */
+export function projectPathProblem(path: string): string | undefined {
+    if (/[,;:'"]/.test(path)) {
+        return "A project path can't contain commas, semicolons, colons or quotes.";
+    }
+    if (path.split("/").some((segment) => /\s/.test(segment.trim()))) {
+        return "A project path can't contain spaces; use `/` to nest.";
+    }
+    return undefined;
+}
+
 export function projectTag(path: string): string {
     return `${PROJECT_TAG_NAME}:${path}`;
 }

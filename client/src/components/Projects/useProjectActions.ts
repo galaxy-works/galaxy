@@ -6,7 +6,7 @@ import { useHistoryStore } from "@/stores/historyStore";
 import { useProjectStore } from "@/stores/projectStore";
 import { updateHistoryFields } from "@/stores/services/history.services";
 
-import { normalizeProjectPath, PROJECT_TAG_NAME, projectPathsOf, projectTag } from "./projectTags";
+import { normalizeProjectPath, PROJECT_TAG_NAME, projectPathProblem, projectPathsOf, projectTag } from "./projectTags";
 
 export const DEFAULT_HISTORY_NAME = "Unnamed history";
 
@@ -33,6 +33,18 @@ export function childProjectPath(parentPath: string | undefined, name: string): 
     return normalizeProjectPath(parentPath ? `${parentPath}/${name}` : name);
 }
 
+function checkedProjectPath(path: string): string {
+    const problem = projectPathProblem(path);
+    if (problem) {
+        throw new Error(problem);
+    }
+    const normalized = normalizeProjectPath(path);
+    if (!normalized) {
+        throw new Error("A project path is required.");
+    }
+    return normalized;
+}
+
 export interface TaggedHistory {
     id: string;
     tags?: string[] | null;
@@ -47,10 +59,7 @@ export function useProjectActions() {
      * This is also how a new (sub)project comes into being.
      */
     async function createHistoryInProject(path: string, name?: string): Promise<string> {
-        const normalized = normalizeProjectPath(path);
-        if (!normalized) {
-            throw new Error("A project path is required.");
-        }
+        const normalized = checkedProjectPath(path);
         await historyStore.createNewHistory(name?.trim() || DEFAULT_HISTORY_NAME);
         const historyId = historyStore.currentHistoryId;
         if (!historyId) {
@@ -69,10 +78,7 @@ export function useProjectActions() {
      * With `move`, the histories' other project tags are dropped.
      */
     async function addHistoriesToProject(histories: TaggedHistory[], path: string, move = false): Promise<void> {
-        const normalized = normalizeProjectPath(path);
-        if (!normalized) {
-            throw new Error("A project path is required.");
-        }
+        const normalized = checkedProjectPath(path);
         try {
             for (const history of histories) {
                 const current = history.tags ?? [];
