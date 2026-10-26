@@ -4,7 +4,7 @@
  * `project:<path>` tags on the current user's histories and workflows. There is no
  * project model on the server; `/` in the tag value nests projects.
  */
-import { faFolderOpen } from "@fortawesome/free-solid-svg-icons";
+import { faFolderOpen, faPlus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { storeToRefs } from "pinia";
 import { computed, onMounted, ref, watch } from "vue";
@@ -20,10 +20,12 @@ import { errorMessageAsString } from "@/utils/simple-error";
 import { buildProjectTree, countNodes, isWithinProject, projectPathsOf } from "./projectTags";
 
 import GAlert from "@/components/BaseComponents/GAlert.vue";
+import GButton from "@/components/BaseComponents/GButton.vue";
 import GLink from "@/components/BaseComponents/GLink.vue";
 import BreadcrumbHeading from "@/components/Common/BreadcrumbHeading.vue";
 import Heading from "@/components/Common/Heading.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
+import ProjectHistoryDialog from "@/components/Projects/ProjectHistoryDialog.vue";
 import ProjectTreeNode from "@/components/Projects/ProjectTreeNode.vue";
 import StatelessTags from "@/components/TagsMultiselect/StatelessTags.vue";
 import UtcDate from "@/components/UtcDate.vue";
@@ -172,6 +174,12 @@ function onTagClick(tag: string) {
     }
 }
 
+const historyDialog = ref({ show: false, parentPath: undefined as string | undefined, newProject: false });
+
+function openHistoryDialog(parentPath: string | undefined, newProject: boolean) {
+    historyDialog.value = { show: true, parentPath, newProject };
+}
+
 watch(
     () => props.path,
     (path) => {
@@ -192,7 +200,18 @@ onMounted(async () => {
 
 <template>
     <div id="projects-view" class="overflow-auto d-flex flex-column">
-        <BreadcrumbHeading :items="breadcrumbItems" />
+        <BreadcrumbHeading :items="breadcrumbItems">
+            <GButton
+                v-if="!userStore.isAnonymous"
+                size="small"
+                color="blue"
+                outline
+                data-description="new project"
+                @click="openHistoryDialog(undefined, true)">
+                <FontAwesomeIcon :icon="faPlus" />
+                New project
+            </GButton>
+        </BreadcrumbHeading>
         <GAlert v-if="userStore.isAnonymous" variant="warning" show>Log in to see your projects.</GAlert>
         <GAlert v-else-if="errorMessage" variant="danger" show>{{ errorMessage }}</GAlert>
         <LoadingSpan v-else-if="loading" message="Loading projects" />
@@ -210,7 +229,20 @@ onMounted(async () => {
                         :node="node"
                         :selected-path="selectedPath"
                         :counts="exactCounts"
-                        @select="selectProject" />
+                        @select="selectProject">
+                        <template v-slot:actions="{ node: actionNode }">
+                            <GButton
+                                icon-only
+                                transparent
+                                size="small"
+                                tooltip
+                                :title="`New subproject of ${actionNode.path}`"
+                                :data-new-subproject="actionNode.path"
+                                @click="openHistoryDialog(actionNode.path, true)">
+                                <FontAwesomeIcon :icon="faPlus" />
+                            </GButton>
+                        </template>
+                    </ProjectTreeNode>
                 </ul>
             </div>
             <div class="project-details flex-grow-1">
@@ -223,6 +255,16 @@ onMounted(async () => {
                             <FontAwesomeIcon :icon="faFolderOpen" fixed-width />
                             {{ selectedPath }}
                         </Heading>
+                        <GButton
+                            class="ml-2"
+                            size="small"
+                            color="blue"
+                            outline
+                            data-description="new history in project"
+                            @click="openHistoryDialog(selectedPath, false)">
+                            <FontAwesomeIcon :icon="faPlus" />
+                            New history in this project
+                        </GButton>
                         <label class="ml-auto mb-0 small">
                             <input v-model="includeSubprojects" type="checkbox" class="mr-1" />
                             Include subprojects
@@ -344,5 +386,10 @@ onMounted(async () => {
                 </template>
             </div>
         </div>
+        <ProjectHistoryDialog
+            v-model:show="historyDialog.show"
+            :parent-path="historyDialog.parentPath"
+            :new-project="historyDialog.newProject"
+            @created="selectProject" />
     </div>
 </template>

@@ -29,6 +29,7 @@ const emit = defineEmits<{
             {{ node.label }}
             <span class="text-muted small">({{ counts[node.path] ?? 0 }})</span>
         </button>
+        <slot name="actions" :node="node" />
         <ul v-if="node.children.length" class="list-unstyled ml-3 mb-0">
             <ProjectTreeNode
                 v-for="child in node.children"
@@ -36,7 +37,11 @@ const emit = defineEmits<{
                 :node="child"
                 :selected-path="selectedPath"
                 :counts="counts"
-                @select="emit('select', $event)" />
+                @select="emit('select', $event)">
+                <template v-slot:actions="slotProps">
+                    <slot name="actions" v-bind="slotProps" />
+                </template>
+            </ProjectTreeNode>
         </ul>
     </li>
 </template>
