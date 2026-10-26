@@ -10,6 +10,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { useServerMock } from "@/api/client/__mocks__";
 import { type AnyHistoryEntry, getMyHistories, getPublishedHistories, getSharedHistories } from "@/api/histories";
 import { raisedToasts } from "@/composables/__mocks__/toast";
+import { updateHistoryFields } from "@/stores/services/history.services";
 import { useUserStore } from "@/stores/userStore";
 
 import HistoryCard from "./HistoryCard.vue";
@@ -27,6 +28,11 @@ vi.mock("@/api/histories", async (importOriginal) => ({
     getMyHistories: vi.fn(),
     getSharedHistories: vi.fn(),
     getPublishedHistories: vi.fn(),
+}));
+
+vi.mock("@/stores/services/history.services", async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    updateHistoryFields: vi.fn(),
 }));
 
 const { server, http } = useServerMock();
@@ -121,6 +127,14 @@ describe("HistoryList", () => {
         vi.mocked(getSharedHistories).mockResolvedValue({ data: SHARED, total: 2 } as never);
         vi.mocked(getMyHistories).mockResolvedValue({ data: MINE, total: 1 } as never);
         vi.mocked(getPublishedHistories).mockResolvedValue({ data: [], total: 0 } as never);
+        server.use(
+            http.get("/api/histories", ({ response }) => {
+                return response(200).json([]);
+            }),
+            http.get("/api/workflows", ({ response }) => {
+                return response(200).json([]);
+            }),
+        );
     });
 
     it("offers only Remove from Shared for histories selected in the shared view", async () => {
@@ -223,5 +237,47 @@ describe("HistoryList", () => {
         const value = (wrapper.find("#history-list-filter input").element as HTMLInputElement).value;
         expect(value).toContain("tag:lung");
         expect(value).toContain("user:'alice'");
+    });
+
+    describe("add to project", () => {
+        async function addSelectedToProject(path: string, move: boolean) {
+            const histories = [
+                { ...history("h1", "One", "me"), tags: ["project:brain", "keep"] },
+                { ...history("h2", "Two", "me"), tags: [] },
+            ];
+            vi.mocked(getMyHistories).mockResolvedValue({ data: histories, total: 2 } as never);
+            const wrapper = await mountHistoryList("my", "/histories/list");
+            await selectAll(wrapper, histories);
+            await wrapper.find("#history-list-footer-bulk-add-to-project-button").trigger("click");
+            await flushPromises();
+            await wrapper.find("#add-to-project-picker").setValue(path);
+            if (move) {
+                await wrapper.find("#add-to-project-move").setValue(true);
+            }
+            const dialog = wrapper.find("#add-to-project-picker").element.closest("dialog")!;
+            const add = Array.from(dialog.querySelectorAll("button")).find(
+                (button) => button.textContent?.trim() === "Add",
+            );
+            add!.click();
+            await flushPromises();
+            return wrapper;
+        }
+
+        it("adds the project tag to each selected history", async () => {
+            await addSelectedToProject("lung", false);
+
+            expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledTimes(2);
+            expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h1", {
+                tags: ["project:brain", "keep", "project:lung"],
+            });
+            expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h2", { tags: ["project:lung"] });
+        });
+
+        it("replaces the other project tags when moving", async () => {
+            await addSelectedToProject("lung", true);
+
+            expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h1", { tags: ["keep", "project:lung"] });
+            expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h2", { tags: ["project:lung"] });
+        });
     });
 });
