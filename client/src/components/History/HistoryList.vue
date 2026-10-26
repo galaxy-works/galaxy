@@ -8,7 +8,7 @@
  *
  * - Filtering and searching histories with advanced filter options
  * - Pagination for large history collections
- * - Bulk operations (delete, restore, purge, add tags, open in multiview)
+ * - Bulk operations (delete, restore, purge, add tags, add to project, open in multiview)
  * - Individual history selection and management
  * - View mode switching (grid/list)
  * - Sorting capabilities
@@ -19,7 +19,15 @@
  * <HistoryList activeList="shared" />
  */
 
-import { faBurn, faColumns, faPlus, faTags, faTrash, faTrashRestore } from "@fortawesome/free-solid-svg-icons";
+import {
+    faBurn,
+    faColumns,
+    faFolderPlus,
+    faPlus,
+    faTags,
+    faTrash,
+    faTrashRestore,
+} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { BNav, BNavItem, BPagination } from "bootstrap-vue";
 import { computed, onMounted, ref, watch } from "vue";
@@ -34,6 +42,7 @@ import {
 } from "@/api/histories";
 import type HistoryCard from "@/components/History/HistoryCard.vue";
 import { useHistoryCardActions } from "@/components/History/useHistoryCardActions";
+import { useProjectActions } from "@/components/Projects/useProjectActions";
 import { useConfirmDialog } from "@/composables/confirmDialog";
 import { useSelectedItems } from "@/composables/selectedItems/selectedItems";
 import { Toast } from "@/composables/toast";
@@ -56,6 +65,7 @@ import LoginRequired from "@/components/Common/LoginRequired.vue";
 import TagsSelectionDialog from "@/components/Common/TagsSelectionDialog.vue";
 import HistoryCardList from "@/components/History/HistoryCardList.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
+import AddToProjectDialog from "@/components/Projects/AddToProjectDialog.vue";
 
 /**
  * Represents a selected history item with minimal required data
@@ -101,6 +111,8 @@ const showAdvanced = ref(false);
 const listHeader = ref<typeof ListHeader | null>(null);
 const showBulkAddTagsModal = ref(false);
 const bulkTagsLoading = ref(false);
+const showAddToProjectModal = ref(false);
+const addToProjectLoading = ref(false);
 const bulkDeleteOrRestoreLoading = ref(false);
 const bulkPurgeLoading = ref(false);
 const historiesLoaded = ref<AnyHistoryEntry[]>([]);
@@ -463,6 +475,29 @@ async function onBulkTagsAdd(tags: string[]) {
     }
 }
 
+const { addHistoriesToProject } = useProjectActions();
+
+/**
+ * Tags the selected histories with a project, optionally replacing their other project tags
+ */
+async function onAddToProject(path: string, move: boolean) {
+    const ids = new Set(selectedHistories.value.map((h) => h.id));
+    const histories = historiesLoaded.value.filter((h) => ids.has(h.id)).map((h) => ({ id: h.id, tags: h.tags }));
+
+    showAddToProjectModal.value = false;
+    try {
+        overlay.value = true;
+        addToProjectLoading.value = true;
+        await addHistoriesToProject(histories, path, move);
+        Toast.success(`${move ? "Moved" : "Added"} ${histories.length} histories to project ${path}.`);
+    } catch (e) {
+        Toast.error(`Failed to add some histories to project ${path}. ${errorMessageAsString(e)}`);
+    } finally {
+        addToProjectLoading.value = false;
+        await load(true);
+    }
+}
+
 const MULTIVIEW_MAX_HISTORIES = 10;
 
 /**
@@ -757,6 +792,22 @@ onMounted(async () => {
                 </GButton>
 
                 <GButton
+                    v-if="!showDeleted"
+                    id="history-list-footer-bulk-add-to-project-button"
+                    v-g-tooltip.hover
+                    :title="addToProjectLoading ? 'Adding to project' : 'Add selected histories to a project'"
+                    :disabled="addToProjectLoading"
+                    size="small"
+                    color="blue"
+                    @click="showAddToProjectModal = true">
+                    <span v-if="!addToProjectLoading">
+                        <FontAwesomeIcon :icon="faFolderPlus" fixed-width />
+                        Add to project ({{ selectedHistories.length }})
+                    </span>
+                    <LoadingSpan v-else message="Adding to project" />
+                </GButton>
+
+                <GButton
                     v-if="showBulkMultiview"
                     id="history-list-footer-bulk-open-multiview-button"
                     v-g-tooltip.hover
@@ -788,6 +839,13 @@ onMounted(async () => {
             }`"
             @cancel="onToggleBulkTags"
             @ok="onBulkTagsAdd" />
+
+        <AddToProjectDialog
+            v-model:show="showAddToProjectModal"
+            :title="`Add ${selectedHistories.length} selected ${
+                selectedHistories.length > 1 ? 'histories' : 'history'
+            } to a project`"
+            @ok="onAddToProject" />
     </div>
 </template>
 
