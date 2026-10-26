@@ -66,3 +66,19 @@ describe("WorkflowCardList — rename flow", () => {
         expect(renameModal.props("name")).toBe(WORKFLOW_2_NAME);
     });
 });
+
+describe("WorkflowCardList — selection", () => {
+    it("makes cards selectable by default and not when selectable is false", async () => {
+        const selectable = shallowMount(WorkflowCardList as object, {
+            localVue,
+            propsData: { workflows: [FAKE_WORKFLOW] },
+        });
+        expect(selectable.findComponent(WorkflowCard).props("selectable")).toBe(true);
+
+        const notSelectable = shallowMount(WorkflowCardList as object, {
+            localVue,
+            propsData: { workflows: [FAKE_WORKFLOW], selectable: false },
+        });
+        expect(notSelectable.findComponent(WorkflowCard).props("selectable")).toBe(false);
+    });
+});
