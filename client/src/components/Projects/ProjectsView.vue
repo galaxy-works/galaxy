@@ -317,8 +317,8 @@ onMounted(async () => {
                     Select a project to see its histories, workflows and invocations.
                 </p>
                 <template v-else>
-                    <div class="d-flex align-items-center mb-2">
-                        <Heading h2 size="md" class="mb-0">
+                    <div class="project-heading d-flex flex-wrap align-items-center mb-2">
+                        <Heading h2 size="md" class="mb-0 mr-2">
                             <FontAwesomeIcon :icon="faFolderOpen" fixed-width />
                             {{ selectedPath }}
                         </Heading>
@@ -461,5 +461,15 @@ onMounted(async () => {
 <style scoped lang="scss">
 .project-tree {
     min-width: 16rem;
+}
+
+// A flex child defaults to min-width: auto, which would let the cards push the pane wider
+// than the page instead of shrinking with it.
+.project-details {
+    min-width: 0;
+}
+
+.project-heading {
+    row-gap: 0.25rem;
 }
 </style>
