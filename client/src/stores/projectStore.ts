@@ -3,11 +3,12 @@
  * so navigating away from /projects and back reuses the lists instead of refetching them.
  */
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
-import { GalaxyApi, type HistorySummary } from "@/api";
+import { GalaxyApi, type HistorySummary, isRegisteredUser } from "@/api";
 import type { WorkflowSummary } from "@/api/workflows";
 import { projectPathsOf, projectTag } from "@/components/Projects/projectTags";
+import { useUserStore } from "@/stores/userStore";
 import { errorMessageAsString } from "@/utils/simple-error";
 
 /** Everything tagged `project:<anything>`: the raw search term matches on tag name only. */
@@ -51,6 +52,8 @@ export const useProjectStore = defineStore("projectStore", () => {
                     params: {
                         query: {
                             view: "summary",
+                            // HistoryCard only offers owner actions on entries that carry a username.
+                            keys: "username",
                             search: PROJECT_SEARCH,
                             show_own: true,
                             show_published: false,
@@ -113,6 +116,30 @@ export const useProjectStore = defineStore("projectStore", () => {
         return start();
     }
 
+    /** Forgets the lists and drops any in-flight load, so the next fetch starts over. */
+    function reset() {
+        generation += 1;
+        pending = undefined;
+        histories.value = [];
+        workflows.value = [];
+        loading.value = false;
+        loaded.value = false;
+        error.value = undefined;
+    }
+
+    // The lists are per user. Only a switch away from a known user resets; the first load of the
+    // user at startup (no id yet -> id) must not throw away a fetch the page already started.
+    const userStore = useUserStore();
+    watch(
+        () => (isRegisteredUser(userStore.currentUser) ? userStore.currentUser.id : undefined),
+        (id, previous) => {
+            if (previous !== undefined && id !== previous) {
+                reset();
+            }
+        },
+        { flush: "sync" },
+    );
+
     return {
         histories,
         workflows,
@@ -124,5 +151,6 @@ export const useProjectStore = defineStore("projectStore", () => {
         error,
         fetch,
         refresh,
+        reset,
     };
 });

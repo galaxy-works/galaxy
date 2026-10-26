@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { useProjectStore } from "@/stores/projectStore";
+import { useUserStore } from "@/stores/userStore";
 
 const { server, http } = useServerMock();
 
@@ -17,6 +18,10 @@ function workflow(id: string, name: string, tags: string[]) {
 let historyRequests: number;
 let workflowRequests: number;
 let historySearches: (string | null)[];
+
+function user(id: string) {
+    return { id, email: `${id}@example.org`, username: id, isAnonymous: false } as any;
+}
 
 function serve(histories: object[], workflows: object[]) {
     server.use(
@@ -149,5 +154,52 @@ describe("useProjectStore", () => {
         await first;
         expect(store.histories.map((h) => h.id)).toEqual(["new"]);
         expect(store.loading).toBe(false);
+    });
+
+    it("reset clears the lists and drops a load that is still in flight", async () => {
+        let releaseSlow: () => void = () => {};
+        const slow = new Promise<void>((resolve) => (releaseSlow = resolve));
+        server.use(
+            http.get("/api/histories", async ({ response }) => {
+                await slow;
+                return response(200).json([history("h1", "Lung run", ["project:lung"])] as any);
+            }),
+            http.get("/api/workflows", ({ response }) => response(200).json([])),
+        );
+        const store = useProjectStore();
+        const inFlight = store.fetch();
+        expect(store.loading).toBe(true);
+
+        store.reset();
+        expect(store.loading).toBe(false);
+
+        releaseSlow();
+        await inFlight;
+        expect(store.histories).toEqual([]);
+        expect(store.loaded).toBe(false);
+
+        serve([history("h2", "Brain run", ["project:brain"])], []);
+        await store.fetch();
+        expect(store.histories.map((h) => h.id)).toEqual(["h2"]);
+    });
+
+    it("resets when the current user changes, but not when the user first loads", async () => {
+        serve([history("h1", "Lung run", ["project:lung"])], []);
+        const userStore = useUserStore();
+        const store = useProjectStore();
+        await store.fetch();
+
+        userStore.currentUser = user("alice");
+        expect(store.loaded).toBe(true);
+        expect(store.histories).toHaveLength(1);
+
+        userStore.currentUser = user("bob");
+        expect(store.loaded).toBe(false);
+        expect(store.histories).toEqual([]);
+
+        serve([history("h2", "Bob run", ["project:brain"])], []);
+        await store.fetch();
+        expect(store.histories.map((h) => h.id)).toEqual(["h2"]);
+        expect(historyRequests).toBe(2);
     });
 });
