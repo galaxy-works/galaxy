@@ -18,19 +18,40 @@ function workflow(id: string, name: string, tags: string[]) {
 let historyRequests: number;
 let workflowRequests: number;
 let historySearches: (string | null)[];
+let sharedHistoryQueries: URLSearchParams[];
+let sharedWorkflowQueries: URLSearchParams[];
 
 function user(id: string) {
     return { id, email: `${id}@example.org`, username: id, isAnonymous: false } as any;
 }
 
-function serve(histories: object[], workflows: object[]) {
+function isSharedRequest(request: Request) {
+    return new URL(request.url).searchParams.get("show_shared") === "true";
+}
+
+/** Answers the own and the shared requests separately, like the server does. */
+function serve(
+    histories: object[],
+    workflows: object[],
+    sharedHistories: object[] = [],
+    sharedWorkflows: object[] = [],
+) {
     server.use(
         http.get("/api/histories", ({ request, response }) => {
+            const query = new URL(request.url).searchParams;
+            if (isSharedRequest(request)) {
+                sharedHistoryQueries.push(query);
+                return response(200).json(sharedHistories as any);
+            }
             historyRequests += 1;
-            historySearches.push(new URL(request.url).searchParams.get("search"));
+            historySearches.push(query.get("search"));
             return response(200).json(histories as any);
         }),
-        http.get("/api/workflows", ({ response }) => {
+        http.get("/api/workflows", ({ request, response }) => {
+            if (isSharedRequest(request)) {
+                sharedWorkflowQueries.push(new URL(request.url).searchParams);
+                return response(200).json(sharedWorkflows as any);
+            }
             workflowRequests += 1;
             return response(200).json(workflows as any);
         }),
@@ -42,6 +63,8 @@ beforeEach(() => {
     historyRequests = 0;
     workflowRequests = 0;
     historySearches = [];
+    sharedHistoryQueries = [];
+    sharedWorkflowQueries = [];
 });
 
 describe("useProjectStore", () => {
@@ -201,5 +224,110 @@ describe("useProjectStore", () => {
         await store.fetch();
         expect(store.histories.map((h) => h.id)).toEqual(["h2"]);
         expect(historyRequests).toBe(2);
+    });
+
+    describe("items shared with the user", () => {
+        function shared<T extends object>(item: T, owner: string) {
+            return "model_class" in item && item.model_class === "History"
+                ? { ...item, username: owner }
+                : { ...item, owner };
+        }
+
+        it("asks for the shared histories and workflows apart from the user's own", async () => {
+            serve([], []);
+            await useProjectStore().fetch();
+
+            expect(sharedHistoryQueries).toHaveLength(1);
+            const historyQuery = sharedHistoryQueries[0]!;
+            expect(historyQuery.get("show_own")).toBe("false");
+            expect(historyQuery.get("show_published")).toBe("false");
+            expect(historyQuery.get("search")).toBe("project:");
+            expect(historyQuery.get("view")).toBe("summary");
+            expect(historyQuery.get("keys")).toBe("username");
+
+            expect(sharedWorkflowQueries).toHaveLength(1);
+            const workflowQuery = sharedWorkflowQueries[0]!;
+            expect(workflowQuery.get("show_published")).toBe("false");
+            // show_shared alone also returns the user's own workflows
+            expect(workflowQuery.get("search")).toBe("project: is:shared_with_me");
+        });
+
+        it("keeps shared items in their own lists and takes their paths into the tree", async () => {
+            useUserStore().currentUser = user("alice");
+            serve(
+                [history("h1", "Mine", ["project:lung"])],
+                [workflow("w1", "Mine", ["project:lung"])],
+                [shared(history("h2", "Lab mate's", ["project:lung/scrna"]), "bob")],
+                [shared(workflow("w2", "Lab mate's", ["project:methods"]), "bob")],
+            );
+            const store = useProjectStore();
+            await store.fetch();
+
+            expect(store.histories.map((h) => h.id)).toEqual(["h1"]);
+            expect(store.workflows.map((w) => w.id)).toEqual(["w1"]);
+            expect(store.sharedHistories.map((h) => h.id)).toEqual(["h2"]);
+            expect(store.sharedWorkflows.map((w) => w.id)).toEqual(["w2"]);
+            expect(store.sharedHistoryIds.has("h2")).toBe(true);
+            expect(store.sharedHistoryIds.has("h1")).toBe(false);
+            expect(store.historyProjects.get("h2")).toEqual(["lung/scrna"]);
+            expect(store.workflowProjects.get("w2")).toEqual(["methods"]);
+            expect(store.projectPaths).toEqual(["lung", "lung/scrna", "methods"]);
+            expect(store.sharedError).toBeUndefined();
+        });
+
+        it("never counts one of the user's own items as shared", async () => {
+            useUserStore().currentUser = user("alice");
+            serve(
+                [history("h1", "Mine", ["project:lung"])],
+                [],
+                [shared(history("h1", "Mine", ["project:lung"]), "alice")],
+                [
+                    shared(workflow("w1", "Mine too", ["project:lung"]), "alice"),
+                    shared(workflow("w2", "Untagged", []), "bob"),
+                ],
+            );
+            const store = useProjectStore();
+            await store.fetch();
+
+            expect(store.sharedHistories).toEqual([]);
+            expect(store.sharedWorkflows).toEqual([]);
+        });
+
+        it("keeps the user's own lists and notes the failure when the shared half fails", async () => {
+            serve([history("h1", "Mine", ["project:lung"])], [workflow("w1", "Mine", ["project:lung"])]);
+            server.use(
+                http.get("/api/histories", ({ request, response }) => {
+                    if (isSharedRequest(request)) {
+                        return response("5XX").json({ err_code: 500001, err_msg: "Shares broke" }, { status: 500 });
+                    }
+                    return response(200).json([history("h1", "Mine", ["project:lung"])] as any);
+                }),
+            );
+            const store = useProjectStore();
+            await store.fetch();
+
+            expect(store.error).toBeUndefined();
+            expect(store.loaded).toBe(true);
+            expect(store.sharedError).toContain("Shares broke");
+            expect(store.histories.map((h) => h.id)).toEqual(["h1"]);
+            expect(store.workflows.map((w) => w.id)).toEqual(["w1"]);
+            expect(store.sharedHistories).toEqual([]);
+
+            serve([history("h1", "Mine", ["project:lung"])], [], [history("h2", "Shared", ["project:lung"])]);
+            await store.refresh();
+            expect(store.sharedError).toBeUndefined();
+            expect(store.sharedHistories.map((h) => h.id)).toEqual(["h2"]);
+        });
+
+        it("drops shared items on reset", async () => {
+            serve([], [], [history("h2", "Shared", ["project:lung"])]);
+            const store = useProjectStore();
+            await store.fetch();
+            expect(store.sharedHistories).toHaveLength(1);
+
+            store.reset();
+            expect(store.sharedHistories).toEqual([]);
+            expect(store.projectPaths).toEqual([]);
+        });
     });
 });

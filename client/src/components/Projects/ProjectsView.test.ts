@@ -57,13 +57,27 @@ const INVOCATIONS = [
 
 let historyRequests: number;
 
-function serve(histories: object[], workflows: object[], invocations: object[] = INVOCATIONS) {
+function isSharedRequest(request: Request) {
+    return new URL(request.url).searchParams.get("show_shared") === "true";
+}
+
+function serve(
+    histories: object[],
+    workflows: object[],
+    invocations: object[] = INVOCATIONS,
+    shared: { histories?: object[]; workflows?: object[] } = {},
+) {
     server.use(
-        http.get("/api/histories", ({ response }) => {
+        http.get("/api/histories", ({ request, response }) => {
+            if (isSharedRequest(request)) {
+                return response(200).json((shared.histories ?? []) as any);
+            }
             historyRequests += 1;
             return response(200).json(histories as any);
         }),
-        http.get("/api/workflows", ({ response }) => response(200).json(workflows as any)),
+        http.get("/api/workflows", ({ request, response }) =>
+            response(200).json((isSharedRequest(request) ? (shared.workflows ?? []) : workflows) as any),
+        ),
         http.get("/api/workflows/{workflow_id}", ({ params, response }) => {
             const stored = WORKFLOWS.find((w) => w.latest_workflow_id === params.workflow_id);
             return response(200).json(stored as any);

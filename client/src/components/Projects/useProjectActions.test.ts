@@ -36,8 +36,11 @@ beforeEach(() => {
             updates.push({ id: params.history_id, body });
             return response(200).json(history(params.history_id, "Updated", body.tags) as any);
         }),
-        http.get("/api/histories", ({ response }) => {
-            projectRequests += 1;
+        http.get("/api/histories", ({ request, response }) => {
+            // the project store also asks for the histories shared with the user; count its own-list loads
+            if (new URL(request.url).searchParams.get("show_shared") !== "true") {
+                projectRequests += 1;
+            }
             return response(200).json([]);
         }),
         http.get("/api/workflows", ({ response }) => response(200).json([])),
