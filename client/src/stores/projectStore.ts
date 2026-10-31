@@ -74,8 +74,9 @@ export const useProjectStore = defineStore("projectStore", () => {
                     params: {
                         query: {
                             view: "summary",
-                            // HistoryCard only offers owner actions on entries that carry a username.
-                            keys: "username",
+                            // HistoryCard offers owner actions on entries that carry a username, and
+                            // assumes ownership when user_id is missing, so shared cards need both.
+                            keys: "username,user_id",
                             search: PROJECT_SEARCH,
                             show_own: true,
                             show_published: false,
@@ -150,7 +151,7 @@ export const useProjectStore = defineStore("projectStore", () => {
                     params: {
                         query: {
                             view: "summary",
-                            keys: "username",
+                            keys: "username,user_id",
                             search: PROJECT_SEARCH,
                             show_own: false,
                             show_published: false,

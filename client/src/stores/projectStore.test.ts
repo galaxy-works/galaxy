@@ -243,7 +243,7 @@ describe("useProjectStore", () => {
             expect(historyQuery.get("show_published")).toBe("false");
             expect(historyQuery.get("search")).toBe("project:");
             expect(historyQuery.get("view")).toBe("summary");
-            expect(historyQuery.get("keys")).toBe("username");
+            expect(historyQuery.get("keys")).toBe("username,user_id");
 
             expect(sharedWorkflowQueries).toHaveLength(1);
             const workflowQuery = sharedWorkflowQueries[0]!;
