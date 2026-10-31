@@ -45,4 +45,16 @@ describe("projectContextStore", () => {
         store.clearCurrentProject();
         expect(store.hasCurrentProject).toBe(false);
     });
+
+    it("keeps the stored path a string so it survives a reload", () => {
+        // The local storage sync parses what it finds by the type of the ref's current value;
+        // a null here would make it JSON-parse "lung" and reset the key.
+        const store = useProjectContextStore();
+        expect(store.currentProjectPath).toBe("");
+        store.currentProject = "lung";
+        expect(store.currentProjectPath).toBe("lung");
+        expect(store.currentProject).toBe("lung");
+        store.currentProject = null;
+        expect(store.currentProjectPath).toBe("");
+    });
 });

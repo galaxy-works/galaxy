@@ -16,8 +16,15 @@ import { useUserLocalStorage } from "@/composables/userLocalStorage";
 
 export const useProjectContextStore = defineStore("projectContextStore", () => {
     const projectsAsField = useUserLocalStorage<boolean>("projects-as-field", false);
-    const currentProject = useUserLocalStorage<string | null>("current-project", null);
+    // Stored as a string with "" for none: the local storage sync parses a stored value by the
+    // type of the ref's current value, and a null initial value would make it try JSON on "lung".
+    const currentProjectPath = useUserLocalStorage<string>("current-project", "");
     const includeSubprojects = useUserLocalStorage<boolean>("current-project-include-subprojects", true);
+
+    const currentProject = computed<string | null>({
+        get: () => currentProjectPath.value || null,
+        set: (path) => setCurrentProject(path),
+    });
 
     const hasCurrentProject = computed(() => Boolean(currentProject.value));
 
@@ -27,12 +34,11 @@ export const useProjectContextStore = defineStore("projectContextStore", () => {
     );
 
     function setCurrentProject(path: string | null | undefined) {
-        const normalized = path ? normalizeProjectPath(path) : "";
-        currentProject.value = normalized || null;
+        currentProjectPath.value = path ? normalizeProjectPath(path) : "";
     }
 
     function clearCurrentProject() {
-        currentProject.value = null;
+        currentProjectPath.value = "";
     }
 
     /** True when `path` falls inside the current project (or there is no current project). */
@@ -46,6 +52,7 @@ export const useProjectContextStore = defineStore("projectContextStore", () => {
 
     return {
         projectsAsField,
+        currentProjectPath,
         currentProject,
         includeSubprojects,
         hasCurrentProject,
