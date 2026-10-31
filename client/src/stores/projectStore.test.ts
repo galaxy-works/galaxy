@@ -249,7 +249,7 @@ describe("useProjectStore", () => {
             const workflowQuery = sharedWorkflowQueries[0]!;
             expect(workflowQuery.get("show_published")).toBe("false");
             // show_shared alone also returns the user's own workflows
-            expect(workflowQuery.get("search")).toBe("project: is:shared_with_me");
+            expect(workflowQuery.get("search")).toBe("project:");
         });
 
         it("keeps shared items in their own lists and takes their paths into the tree", async () => {

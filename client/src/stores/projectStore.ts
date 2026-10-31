@@ -163,8 +163,10 @@ export const useProjectStore = defineStore("projectStore", () => {
                 GalaxyApi().GET("/api/workflows", {
                     params: {
                         query: {
-                            // show_shared alone would add shared workflows to the user's own.
-                            search: `${PROJECT_SEARCH} is:shared_with_me`,
+                            // show_shared returns the user's own workflows too (and the server
+                            // matches nothing when is:shared_with_me is combined with a raw term),
+                            // so the owner check below is what separates the shared ones out.
+                            search: PROJECT_SEARCH,
                             show_published: false,
                             show_shared: true,
                             skip_step_counts: true,
