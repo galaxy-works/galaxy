@@ -55,6 +55,11 @@
         <FormCard title="History Options">
             <template v-slot:body>
                 <FormDisplay :inputs="historyInputs" @onChange="onHistoryInputs" />
+                <ProjectPicker
+                    v-if="projectsAsField && shouldRunOnNewHistory"
+                    id="new-history-project"
+                    v-model="newHistoryProject"
+                    class="mt-2" />
             </template>
         </FormCard>
         <FormCard title="Job re-use Options">
@@ -99,6 +104,7 @@ import { computed, ref } from "vue";
 import type { WorkflowInvocation } from "@/api/invocations";
 import type { ServiceCredentialsDefinition } from "@/api/userCredentials";
 import type { FormData, FormInputNode } from "@/components/Form/composables/useFormState";
+import { useNewHistoryProject } from "@/components/Projects/useNewHistoryProject";
 import { useUserMultiToolCredentials } from "@/composables/userMultiToolCredentials";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useToolsServiceCredentialsDefinitionsStore } from "@/stores/toolsServiceCredentialsDefinitionsStore";
@@ -115,6 +121,7 @@ import ButtonSpinner from "@/components/Common/ButtonSpinner.vue";
 import FormCard from "@/components/Form/FormCard.vue";
 import FormDisplay from "@/components/Form/FormDisplay.vue";
 import FormElement from "@/components/Form/FormElement.vue";
+import ProjectPicker from "@/components/Projects/ProjectPicker.vue";
 import OnCompleteActions from "@/components/Workflow/Run/OnCompleteActions.vue";
 import WorkflowCredentials from "@/components/Workflow/Run/WorkflowCredentials.vue";
 
@@ -161,6 +168,7 @@ const emit = defineEmits<{
 
 const { currentUser } = storeToRefs(useUserStore());
 const { currentHistoryId } = storeToRefs(useHistoryStore());
+const { projectsAsField, newHistoryProject, tagNewHistories } = useNewHistoryProject();
 
 const showExecuting = ref(false);
 const stepScrollTo = ref<{ stepId?: string; stepError?: ValidationScrollTo }>({});
@@ -335,6 +343,9 @@ function onExecute() {
             console.debug("WorkflowRunForm::onExecute()", "Submission successful.", invocations);
             showExecuting.value = false;
             emit("submissionSuccess", invocations);
+            if (shouldRunOnNewHistory.value) {
+                return tagNewHistories(invocations);
+            }
         })
         .catch((e) => {
             console.debug("WorkflowRunForm::onExecute()", "Submission failed.", e);

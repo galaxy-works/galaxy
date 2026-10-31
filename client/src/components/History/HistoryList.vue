@@ -70,6 +70,7 @@ import TagsSelectionDialog from "@/components/Common/TagsSelectionDialog.vue";
 import HistoryCardList from "@/components/History/HistoryCardList.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
 import AddToProjectDialog from "@/components/Projects/AddToProjectDialog.vue";
+import ProjectBar from "@/components/Projects/ProjectBar.vue";
 
 /**
  * Represents a selected history item with minimal required data
@@ -703,6 +704,8 @@ onMounted(async () => {
                         title="View Archived Histories" />
                 </BNavItem>
             </BNav>
+
+            <ProjectBar v-model:filter-text="filterText" />
 
             <FilterMenu
                 id="history-list-filter"

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { faTimes } from "@fortawesome/free-solid-svg-icons";
+import { faFolder, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { computed } from "vue";
 
+import { projectPathsOf } from "@/components/Projects/projectTags";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { keyedColorScheme } from "@/utils/color";
 
 import GButton from "@/components/BaseComponents/GButton.vue";
@@ -21,7 +23,24 @@ const emit = defineEmits<{
     (e: "deleted", tag: string): void;
 }>();
 
-const color = computed(() => keyedColorScheme(props.option));
+const projectContextStore = useProjectContextStore();
+
+/** The path as tagged, when this tag should show as a project badge rather than a tag. */
+const projectPath = computed(() => {
+    if (!projectContextStore.projectsAsField || projectPathsOf([props.option]).length === 0) {
+        return undefined;
+    }
+    return props.option.slice(props.option.indexOf(":") + 1);
+});
+
+// A project badge is neutral so it reads as a field value, not as one more coloured tag.
+const NEUTRAL_COLOR = {
+    primary: "var(--color-grey-100)",
+    darker: "var(--color-grey-300)",
+    dimmed: "var(--color-grey-200)",
+};
+
+const color = computed(() => (projectPath.value === undefined ? keyedColorScheme(props.option) : NEUTRAL_COLOR));
 
 function onClick() {
     emit("click", props.option);
@@ -39,11 +58,15 @@ const searched = computed(() => props.option?.toLowerCase() === props.search?.to
     <div
         class="tag btn-transparent-background"
         :data-option="props.option"
-        :class="{ editable, clickable, searched }"
+        :class="{ editable, clickable, searched, 'project-badge': projectPath !== undefined }"
+        :title="projectPath !== undefined ? `Project: ${projectPath}` : undefined"
         :style="`--color-primary: ${color.primary}; --color-darker: ${color.darker}; --color-dimmed: ${color.dimmed}`"
         @click.prevent.stop="onClick"
         @mousedown.prevent.stop>
-        <span :class="{ 'font-weight-bold': named }">
+        <span v-if="projectPath !== undefined">
+            <FontAwesomeIcon :icon="faFolder" class="mr-1" data-project-badge-icon />{{ projectPath }}
+        </span>
+        <span v-else :class="{ 'font-weight-bold': named }">
             {{ props.option }}
         </span>
         <GButton

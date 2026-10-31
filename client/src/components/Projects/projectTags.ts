@@ -13,6 +13,11 @@ export interface ProjectNode {
     children: ProjectNode[];
 }
 
+export interface ProjectNodeCounts {
+    histories: number;
+    workflows: number;
+}
+
 /** Project paths carried by a tag list, normalized to lower case with no empty segments. */
 export function projectPathsOf(tags: string[] | undefined | null): string[] {
     const paths = new Set<string>();
@@ -122,4 +127,28 @@ function sortTree(nodes: ProjectNode[]) {
 
 export function countNodes(nodes: ProjectNode[]): number {
     return nodes.reduce((total, node) => total + 1 + countNodes(node.children), 0);
+}
+
+/**
+ * Histories and workflows in each node of the tree, subprojects included. An item tagged with
+ * both a project and one of its subprojects counts once for the parent.
+ */
+export function countProjectItems(
+    nodes: ProjectNode[],
+    historyPaths: Iterable<string[]>,
+    workflowPaths: Iterable<string[]>,
+): Record<string, ProjectNodeCounts> {
+    const histories = [...historyPaths];
+    const workflows = [...workflowPaths];
+    const counts: Record<string, ProjectNodeCounts> = {};
+    const within = (paths: string[], nodePath: string) => paths.some((path) => isWithinProject(path, nodePath));
+    const visit = (node: ProjectNode) => {
+        counts[node.path] = {
+            histories: histories.filter((paths) => within(paths, node.path)).length,
+            workflows: workflows.filter((paths) => within(paths, node.path)).length,
+        };
+        node.children.forEach(visit);
+    };
+    nodes.forEach(visit);
+    return counts;
 }

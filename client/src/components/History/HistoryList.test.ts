@@ -10,6 +10,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { useServerMock } from "@/api/client/__mocks__";
 import { type AnyHistoryEntry, getMyHistories, getPublishedHistories, getSharedHistories } from "@/api/histories";
 import { raisedToasts } from "@/composables/__mocks__/toast";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { updateHistoryFields } from "@/stores/services/history.services";
 import { useUserStore } from "@/stores/userStore";
 
@@ -59,10 +60,11 @@ const MINE = [history("mine_1", "Mine", "me")];
 
 let failSecond = false;
 
-async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string) {
+async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string, projectsAsField = false) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
     useUserStore().currentUser = FAKE_USER;
+    useProjectContextStore().projectsAsField = projectsAsField;
     let mountRouter = router;
     if (path) {
         mountRouter = createRouter({
@@ -278,6 +280,35 @@ describe("HistoryList", () => {
 
             expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h1", { tags: ["keep", "project:lung"] });
             expect(vi.mocked(updateHistoryFields)).toHaveBeenCalledWith("h2", { tags: ["project:lung"] });
+        });
+    });
+
+    describe("project bar", () => {
+        beforeEach(() => {
+            server.use(
+                http.get("/api/histories", ({ response }) =>
+                    response(200).json([{ ...history("p1", "Tagged", "me"), tags: ["project:Lung"] }] as never),
+                ),
+            );
+        });
+
+        it("is not shown while projects are shown as tags", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list");
+
+            expect(wrapper.find("[data-project-bar]").exists()).toBe(false);
+        });
+
+        it("filters the list on the exact project tag and clears it again", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list", true);
+
+            await wrapper.find("[data-project-bar-chip='lung']").trigger("click");
+            await flushPromises();
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:'project:Lung'" }));
+            expect(wrapper.find("[data-project-bar-chip='lung']").attributes("aria-pressed")).toBe("true");
+
+            await wrapper.find("[data-project-bar-chip='']").trigger("click");
+            await flushPromises();
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
         });
     });
 });

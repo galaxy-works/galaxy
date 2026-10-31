@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { useHistoryStore } from "@/stores/historyStore";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { useUserStore } from "@/stores/userStore";
 
 import SelectorModal from "./SelectorModal.vue";
@@ -122,6 +123,25 @@ describe("History SelectorModal.vue", () => {
 
         expect(wrapper.emitted("selectHistory")).toBeDefined();
         expect(emittedArg(wrapper, "selectHistory").id).toBe(targetHistoryId);
+    });
+
+    it("filters on a project from the project bar when projects are a field", async () => {
+        allHistories[4].tags = ["project:lung"];
+        server.use(http.get("/api/workflows", ({ response }) => response(200).json([])));
+        try {
+            await mountWith(PROPS_FOR_MODAL);
+            expect(wrapper.find("[data-project-bar]").exists()).toBe(false);
+
+            // The switch is stored per user, so it is set once the user is known.
+            useProjectContextStore().projectsAsField = true;
+            await flushPromises();
+            await wrapper.find("[data-project-bar-chip='lung']").trigger("click");
+            await flushPromises();
+            expect(wrapper.findComponent({ name: "HistoryScrollList" }).props("filter")).toBe("tag:'project:lung'");
+        } finally {
+            useProjectContextStore().projectsAsField = false;
+            allHistories[4].tags = [];
+        }
     });
 
     it("shows a custom selection instruction", async () => {

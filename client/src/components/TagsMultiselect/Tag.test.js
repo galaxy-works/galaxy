@@ -2,6 +2,8 @@ import { getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 
+import { useProjectContextStore } from "@/stores/projectContextStore";
+
 import Tag from "./Tag.vue";
 
 const localVue = getLocalVue();
@@ -113,5 +115,57 @@ describe("Tag", () => {
         await tag.vm.$nextTick();
 
         expect(tag.classes()).toContain("searched");
+    });
+
+    describe("project tags", () => {
+        function mountProjectTag(props, asField) {
+            const tag = mountWithProps(props);
+            useProjectContextStore().projectsAsField = asField;
+            return tag;
+        }
+
+        it("stays an ordinary tag while projects are shown as tags", async () => {
+            const tag = mountProjectTag({ option: "project:lung/scrna" }, false);
+            await tag.vm.$nextTick();
+
+            expect(tag.text()).toBe("project:lung/scrna");
+            expect(tag.classes()).not.toContain("project-badge");
+            expect(tag.find("[data-project-badge-icon]").exists()).toBe(false);
+        });
+
+        it("renders as a folder badge without the prefix when projects are a field", async () => {
+            const tag = mountProjectTag({ option: "project:Lung/scrna" }, true);
+            await tag.vm.$nextTick();
+
+            expect(tag.text()).toBe("Lung/scrna");
+            expect(tag.classes()).toContain("project-badge");
+            expect(tag.find("[data-project-badge-icon]").exists()).toBe(true);
+            expect(tag.attributes("title")).toBe("Project: Lung/scrna");
+            expect(tag.attributes("style")).toContain("--color-primary: var(--color-grey-100)");
+        });
+
+        it("still emits the full tag on click and delete", async () => {
+            const tag = mountProjectTag({ option: "project:lung", clickable: true, editable: true }, true);
+            await tag.vm.$nextTick();
+
+            await tag.trigger("click");
+            expect(tag.emitted("click")).toEqual([["project:lung"]]);
+
+            await tag.find(".tag-delete-button").trigger("click");
+            expect(tag.emitted("deleted")).toEqual([["project:lung"]]);
+            expect(tag.find(".tag-delete-button").attributes("aria-label")).toBe("Remove tag project:lung");
+        });
+
+        it("leaves other tags alone when projects are a field", async () => {
+            const plain = mountProjectTag({ option: "qc" }, true);
+            const named = mountProjectTag({ option: "#sample" }, true);
+            const empty = mountProjectTag({ option: "project:" }, true);
+            await plain.vm.$nextTick();
+
+            expect(plain.classes()).not.toContain("project-badge");
+            expect(named.find(".tag span").classes()).toContain("font-weight-bold");
+            expect(named.text()).toBe("#sample");
+            expect(empty.classes()).not.toContain("project-badge");
+        });
     });
 });

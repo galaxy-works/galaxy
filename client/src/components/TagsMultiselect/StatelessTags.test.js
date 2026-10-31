@@ -3,6 +3,7 @@ import { DOMWrapper, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Toast } from "@/composables/toast";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 
 import StatelessTags from "./StatelessTags.vue";
 
@@ -177,5 +178,30 @@ describe("StatelessTags", () => {
 
         const showMoreLink = wrapper.find(".toggle-link");
         expect(showMoreLink.text()).toContain("2");
+    });
+
+    it("shows project tags as badges in the editor and still deletes them", async () => {
+        const wrapper = mountWithProps({ value: ["project:lung", "name:sample", "qc"], clickable: true });
+        useProjectContextStore().projectsAsField = true;
+        await wrapper.vm.$nextTick();
+
+        const badge = wrapper.find(".tag.project-badge");
+        expect(badge.text()).toBe("lung");
+        expect(wrapper.find(".tag[data-option='#sample']").text()).toBe("#sample");
+
+        await badge.trigger("click");
+        expect(wrapper.emitted("tag-click")).toEqual([["project:lung"]]);
+
+        await badge.find(".tag-delete-button").trigger("click");
+        expect(wrapper.emitted("input")).toEqual([[["#sample", "qc"]]]);
+    });
+
+    it("keeps project tags as plain tags while projects are shown as tags", async () => {
+        const wrapper = mountWithProps({ value: ["project:lung"], disabled: true });
+        useProjectContextStore().projectsAsField = false;
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find(".tag.project-badge").exists()).toBe(false);
+        expect(wrapper.find(".tag").text()).toBe("project:lung");
     });
 });

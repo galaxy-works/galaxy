@@ -12,6 +12,7 @@ import type { ToolIdentifier } from "@/api/tools";
 import type { DataOption } from "@/components/Form/Elements/FormData/types";
 import { DEFAULT_OPTIONS_PAGE_SIZE } from "@/components/Form/Elements/FormData/types";
 import type { FormParameterTypes } from "@/components/Form/parameterTypes";
+import { useNewHistoryProject } from "@/components/Projects/useNewHistoryProject";
 import { isWorkflowInput } from "@/components/Workflow/constants";
 import { useConfig } from "@/composables/config";
 import { useFileSources } from "@/composables/fileSources";
@@ -45,6 +46,7 @@ import Heading from "@/components/Common/Heading.vue";
 import FormDisplay from "@/components/Form/FormDisplay.vue";
 import HelpText from "@/components/Help/HelpText.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
+import ProjectPicker from "@/components/Projects/ProjectPicker.vue";
 import WorkflowCredentials from "@/components/Workflow/Run/WorkflowCredentials.vue";
 
 interface Props {
@@ -87,6 +89,7 @@ const inputTypes = ref<Record<string, string>>({});
 const stepValidation = ref<[string, string] | null>(null);
 const sendToNewHistory = ref(props.targetHistory === "new" || props.targetHistory === "prefer_new");
 const newHistoryName = ref(props.model.name);
+const { projectsAsField, newHistoryProject, tagNewHistories } = useNewHistoryProject();
 const useCachedJobs = ref(props.useJobCache);
 const splitObjectStore = ref(false);
 const preferredObjectStoreId = ref<string | null>(null);
@@ -504,6 +507,9 @@ async function onExecute() {
     try {
         const invocations = await invokeWorkflow(props.model.workflowId, data);
         emit("submissionSuccess", invocations);
+        if (sendToNewHistory.value) {
+            await tagNewHistories(invocations);
+        }
     } catch (error) {
         emit("submissionError", errorMessageAsString(error));
     } finally {
@@ -627,6 +633,11 @@ onBeforeMount(() => {
                                 size="sm"
                                 placeholder="New history name"
                                 class="history-name-input" />
+                            <ProjectPicker
+                                v-if="projectsAsField"
+                                id="new-history-project"
+                                v-model="newHistoryProject"
+                                class="mt-2" />
                         </div>
                     </div>
 

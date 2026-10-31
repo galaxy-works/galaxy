@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { h } from "vue";
 
 import { useHistoryStore } from "@/stores/historyStore";
+import { useProjectContextStore } from "@/stores/projectContextStore";
+import { updateHistoryFields } from "@/stores/services/history.services";
 
 import { WorkflowRunModel } from "./model";
 import { invokeWorkflow } from "./services";
@@ -18,6 +20,7 @@ import GButton from "@/components/BaseComponents/GButton.vue";
 vi.mock("./services", () => ({
     invokeWorkflow: vi.fn(),
 }));
+vi.mock("@/stores/services/history.services", () => ({ updateHistoryFields: vi.fn() }));
 
 function stub(name: string, props: string[]) {
     return { default: { name, props, render: () => h("div") } };
@@ -37,7 +40,7 @@ const globalConfig = getLocalVue();
 
 const HISTORY_ID = "8f7a155755f10e73";
 
-function mountForm(canMutateCurrentHistory = true) {
+function mountForm(canMutateCurrentHistory = true, projectsAsField = false) {
     const pinia = createTestingPinia({
         createSpy: vi.fn,
         initialState: {
@@ -48,6 +51,9 @@ function mountForm(canMutateCurrentHistory = true) {
         },
     });
     setActivePinia(pinia);
+    const projectContextStore = useProjectContextStore();
+    projectContextStore.projectsAsField = projectsAsField;
+    projectContextStore.currentProject = "lung";
     return mount(WorkflowRunForm as object, {
         props: {
             model: new WorkflowRunModel(JSON.parse(JSON.stringify(sampleRunData1))),
@@ -181,5 +187,42 @@ describe("WorkflowRunForm", () => {
         const wrapper = mountForm();
         await run(wrapper);
         expect(wrapper.emitted("submissionError")).toEqual([[error]]);
+    });
+
+    describe("project for the new history", () => {
+        function sendToNewHistory(wrapper: VueWrapper) {
+            nth(wrapper.findAllComponents({ name: "FormDisplay" }), 1).vm.$emit("onChange", {
+                "new_history|name": "New",
+            });
+            return wrapper.vm.$nextTick();
+        }
+
+        beforeEach(() => {
+            vi.mocked(updateHistoryFields).mockReset();
+            vi.mocked(invokeWorkflow).mockResolvedValue([{ id: "invocation_id", history_id: "new_history_id" }]);
+        });
+
+        it("offers the picker for a new history and tags it after the run", async () => {
+            const wrapper = mountForm(true, true);
+            expect(wrapper.find("#new-history-project").exists()).toBe(false);
+
+            await sendToNewHistory(wrapper);
+            expect((wrapper.find("#new-history-project").element as HTMLInputElement).value).toBe("lung");
+            await run(wrapper);
+
+            expect(wrapper.emitted("submissionSuccess")).toHaveLength(1);
+            expect(updateHistoryFields).toHaveBeenCalledWith("new_history_id", { tags: ["project:lung"] });
+        });
+
+        it("changes nothing while projects are shown as tags", async () => {
+            const wrapper = mountForm(true, false);
+
+            await sendToNewHistory(wrapper);
+            expect(wrapper.find("#new-history-project").exists()).toBe(false);
+            await run(wrapper);
+
+            expect(wrapper.emitted("submissionSuccess")).toHaveLength(1);
+            expect(updateHistoryFields).not.toHaveBeenCalled();
+        });
     });
 });
