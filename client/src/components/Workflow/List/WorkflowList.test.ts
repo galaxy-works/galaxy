@@ -10,6 +10,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { useServerMock } from "@/api/client/__mocks__";
 import { loadWorkflows } from "@/api/workflows";
 import { raisedToasts } from "@/composables/__mocks__/toast";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { useUserStore } from "@/stores/userStore";
 
 import { generateRandomWorkflowList } from "../testUtils";
@@ -45,9 +46,18 @@ const FAKE_USER = getFakeRegisteredUser({
     username: FAKE_USERNAME,
 });
 
-async function mountWorkflowList(activeList: "my" | "shared_with_me" | "published" = "my", path?: string) {
+async function mountWorkflowList(
+    activeList: "my" | "shared_with_me" | "published" = "my",
+    path?: string,
+    project?: string,
+) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
+    if (project) {
+        // the context is stored per user, so the user has to be known before it is set
+        useUserStore().currentUser = FAKE_USER;
+        useProjectContextStore().setCurrentProject(project);
+    }
 
     let mountRouter = router;
     if (path) {
@@ -370,5 +380,45 @@ describe("WorkflowList", () => {
         const value = (wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value;
         expect(value).toContain("tag:lung");
         expect(value).toContain("user:'alice'");
+    });
+
+    describe("current project scope", () => {
+        const BANNER = "[data-description='project scope banner']";
+
+        beforeEach(() => {
+            mockedLoadWorkflows.mockResolvedValue({ data: [], totalMatches: 0 });
+        });
+
+        it("sends the scope term with the request but keeps the filter text the user's own", async () => {
+            const wrapper = await mountWorkflowList("my", "/workflows/list?filter=name:foo", "lung");
+
+            expect((wrapper.find("#workflow-list-filter input").element as HTMLInputElement).value).toBe("name:foo");
+            expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(
+                expect.objectContaining({ filterText: "tag:project:lung name:foo" }),
+            );
+            expect(wrapper.find(BANNER).text()).toContain("In project lung and its subprojects");
+        });
+
+        it("drops the scope term once the banner's link clears the context", async () => {
+            const wrapper = await mountWorkflowList("my", "/workflows/list", "lung");
+            expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(
+                expect.objectContaining({ filterText: "tag:project:lung" }),
+            );
+
+            await wrapper.find("[data-description='project scope clear']").trigger("click");
+            await flushPromises();
+
+            expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(expect.objectContaining({ filterText: "" }));
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
+
+        it("leaves published workflows unscoped", async () => {
+            const wrapper = await mountWorkflowList("published", "/workflows/list_published", "lung");
+
+            expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(
+                expect.objectContaining({ filterText: "is:published" }),
+            );
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
     });
 });
