@@ -90,8 +90,9 @@ const searchPlaceHolder = computed(() => {
 const published = computed(() => props.activeList === "published");
 const sharedWithMe = computed(() => props.activeList === "shared_with_me");
 const myView = computed(() => props.activeList === "my");
-// Projects are the user's own tags, so only their own list follows the current project.
-const { scopeFilter, withScope } = useProjectScope(myView);
+// A project takes in what was shared with the user under the same tag, but published lists stay whole.
+const projectScoped = computed(() => myView.value || sharedWithMe.value);
+const { scopeFilter, withScope } = useProjectScope(projectScoped);
 const showDeleted = computed(() => filterText.value.includes("is:deleted"));
 const showBookmarked = computed(() => filterText.value.includes("is:bookmarked"));
 const currentPage = computed(() => Math.floor(offset.value / limit.value) + 1);
@@ -492,7 +493,7 @@ onMounted(() => {
                 </template>
             </FilterMenu>
 
-            <ProjectScopeBanner v-if="myView" />
+            <ProjectScopeBanner v-if="projectScoped" />
 
             <ListHeader
                 ref="listHeader"

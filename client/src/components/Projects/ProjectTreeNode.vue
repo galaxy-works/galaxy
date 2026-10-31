@@ -20,17 +20,20 @@ const emit = defineEmits<{
     (e: "select", path: string): void;
 }>();
 
-const nodeCounts = computed(() => props.counts[props.node.path] ?? { histories: 0, workflows: 0 });
+const nodeCounts = computed(
+    () => props.counts[props.node.path] ?? { histories: 0, workflows: 0, sharedHistories: 0, sharedWorkflows: 0 },
+);
 const runs = computed(() => (props.node.path === props.selectedPath ? props.selectedRuns : undefined));
 
-function countOf(count: number, singular: string, plural?: string) {
-    return `${count} ${pluralize(count, singular, plural)}`;
+function countOf(count: number, singular: string, plural?: string, shared = 0) {
+    const text = `${count} ${pluralize(count, singular, plural)}`;
+    return shared ? `${text} (${shared} shared with you)` : text;
 }
 
 const countsTitle = computed(() => {
     const parts = [
-        countOf(nodeCounts.value.histories, "history", "histories"),
-        countOf(nodeCounts.value.workflows, "workflow"),
+        countOf(nodeCounts.value.histories, "history", "histories", nodeCounts.value.sharedHistories),
+        countOf(nodeCounts.value.workflows, "workflow", undefined, nodeCounts.value.sharedWorkflows),
     ];
     if (runs.value !== undefined) {
         parts.push(countOf(runs.value, "run"));

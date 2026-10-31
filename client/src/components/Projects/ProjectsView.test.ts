@@ -10,6 +10,12 @@ import { useServerMock } from "@/api/client/__mocks__";
 
 import ProjectsView from "./ProjectsView.vue";
 
+// Each project load now sends four requests plus one invocation lookup per item, which pushes this
+// file past the client's per-window request budget and stalls the last tests until the window resets.
+vi.mock("@/api/client/rateLimiter", () => ({
+    createRateLimiterMiddleware: () => ({ onRequest: ({ request }: { request: Request }) => request }),
+}));
+
 const { server, http } = useServerMock();
 
 function history(id: string, name: string, tags: string[]) {
@@ -57,13 +63,27 @@ const INVOCATIONS = [
 
 let historyRequests: number;
 
-function serve(histories: object[], workflows: object[], invocations: object[] = INVOCATIONS) {
+function isSharedRequest(request: Request) {
+    return new URL(request.url).searchParams.get("show_shared") === "true";
+}
+
+function serve(
+    histories: object[],
+    workflows: object[],
+    invocations: object[] = INVOCATIONS,
+    shared: { histories?: object[]; workflows?: object[] } = {},
+) {
     server.use(
-        http.get("/api/histories", ({ response }) => {
+        http.get("/api/histories", ({ request, response }) => {
+            if (isSharedRequest(request)) {
+                return response(200).json((shared.histories ?? []) as any);
+            }
             historyRequests += 1;
             return response(200).json(histories as any);
         }),
-        http.get("/api/workflows", ({ response }) => response(200).json(workflows as any)),
+        http.get("/api/workflows", ({ request, response }) =>
+            response(200).json((isSharedRequest(request) ? (shared.workflows ?? []) : workflows) as any),
+        ),
         http.get("/api/workflows/{workflow_id}", ({ params, response }) => {
             const stored = WORKFLOWS.find((w) => w.latest_workflow_id === params.workflow_id);
             return response(200).json(stored as any);
@@ -82,14 +102,14 @@ function serve(histories: object[], workflows: object[], invocations: object[] =
 
 const HistoryCardListStub = {
     name: "HistoryCardList",
-    props: ["histories"],
+    props: { histories: Array, sharedView: Boolean },
     emits: ["tagClick", "refreshList"],
     template: "<div class='history-card-list-stub' />",
 };
 
 const WorkflowCardListStub = {
     name: "WorkflowCardList",
-    props: ["workflows", "selectable", "filterable"],
+    props: { workflows: Array, selectable: Boolean, filterable: Boolean, sharedWithMeView: Boolean },
     emits: ["tagClick", "refreshList"],
     template: "<div class='workflow-card-list-stub' />",
 };
@@ -118,14 +138,34 @@ async function mountView(path?: string) {
     return { wrapper, router };
 }
 
-function shownHistoryIds(wrapper: Awaited<ReturnType<typeof mountView>>["wrapper"]) {
-    const list = wrapper.findComponent({ name: "HistoryCardList" });
-    return list.exists() ? list.props("histories").map((h: { id: string }) => h.id) : [];
+type Wrapper = Awaited<ReturnType<typeof mountView>>["wrapper"];
+
+function historyList(wrapper: Wrapper, shared = false) {
+    return wrapper
+        .findAllComponents({ name: "HistoryCardList" })
+        .find((list) => Boolean(list.props("sharedView")) === shared);
 }
 
-function shownWorkflowIds(wrapper: Awaited<ReturnType<typeof mountView>>["wrapper"]) {
-    const list = wrapper.findComponent({ name: "WorkflowCardList" });
-    return list.exists() ? list.props("workflows").map((w: { id: string }) => w.id) : [];
+function workflowList(wrapper: Wrapper, shared = false) {
+    return wrapper
+        .findAllComponents({ name: "WorkflowCardList" })
+        .find((list) => Boolean(list.props("sharedWithMeView")) === shared);
+}
+
+function shownHistoryIds(wrapper: Wrapper, shared = false) {
+    return (
+        historyList(wrapper, shared)
+            ?.props("histories")
+            .map((h: { id: string }) => h.id) ?? []
+    );
+}
+
+function shownWorkflowIds(wrapper: Wrapper, shared = false) {
+    return (
+        workflowList(wrapper, shared)
+            ?.props("workflows")
+            .map((w: { id: string }) => w.id) ?? []
+    );
 }
 
 function filterOf(href: string | undefined) {
@@ -287,5 +327,93 @@ describe("ProjectsView", () => {
 
         expect(wrapper.find("#projects-error").exists()).toBe(false);
         expect(wrapper.findAll("[data-project-path]")).toHaveLength(3);
+    });
+
+    describe("items shared with the user", () => {
+        const SHARED_HISTORIES = [
+            { ...history("h-mate", "Lab mate's scRNA", ["project:Lung/scrna"]), username: "bob" },
+            { ...history("h-mate-2", "Lab mate's bulk", ["project:lung"]), username: "bob" },
+        ];
+        const SHARED_WORKFLOWS = [{ ...workflow("w-mate", "Lab mate's QC", ["project:methods"]), owner: "bob" }];
+
+        beforeEach(() => {
+            serve(HISTORIES, WORKFLOWS, INVOCATIONS, { histories: SHARED_HISTORIES, workflows: SHARED_WORKFLOWS });
+        });
+
+        it("adds shared paths to the tree and says how many items are shared", async () => {
+            const { wrapper } = await mountView();
+
+            const paths = wrapper.findAll("[data-project-path]").map((node) => node.attributes("data-project-path"));
+            expect(paths).toEqual(["lung", "lung/scrna", "methods", "spatial"]);
+            const counts = (path: string) => wrapper.find(`[data-project-path='${path}'] [data-project-counts]`);
+            expect(counts("lung").text()).toBe("4 · 1");
+            expect(counts("lung").attributes("title")).toBe("4 histories (2 shared with you), 1 workflow");
+            expect(counts("methods").attributes("title")).toBe("0 histories, 1 workflow (1 shared with you)");
+        });
+
+        it("shows shared items next to the user's own, marked with their owner", async () => {
+            const { wrapper } = await mountView("lung");
+
+            expect(shownHistoryIds(wrapper)).toEqual(["h-lung", "h-scrna"]);
+            expect(shownHistoryIds(wrapper, true)).toEqual(["h-mate", "h-mate-2"]);
+            const section = wrapper.find("[data-project-histories]");
+            expect(section.text()).toContain("Histories (4, 2 shared with you)");
+            expect(section.find("[data-project-shared-histories]").text()).toContain("Shared with you by bob");
+        });
+
+        it("hands shared workflows to the card list as shared, so their tags stay read-only", async () => {
+            const { wrapper } = await mountView("methods");
+
+            expect(shownWorkflowIds(wrapper)).toEqual([]);
+            expect(shownWorkflowIds(wrapper, true)).toEqual(["w-mate"]);
+            expect(workflowList(wrapper, true)!.props("selectable")).toBe(false);
+            expect(wrapper.find("[data-project-shared-workflows]").text()).toContain("Shared with you by bob");
+            expect(wrapper.find("[data-project-workflows]").text()).not.toContain("No workflows in this project.");
+        });
+
+        it("links to the shared lists only when the project has shared items of that kind", async () => {
+            const { wrapper } = await mountView("lung");
+
+            const sharedHistoryLink = wrapper.find("[data-project-shared-history-list-link]");
+            expect(sharedHistoryLink.attributes("href")).toMatch(/^\/histories\/list_shared\?/);
+            expect(filterOf(sharedHistoryLink.attributes("href"))).toBe("tag:'project:lung'");
+            expect(filterOf(wrapper.find("[data-project-history-list-link]").attributes("href"))).toBe(
+                "tag:'project:Lung'",
+            );
+            expect(wrapper.find("[data-project-shared-workflow-list-link]").exists()).toBe(false);
+
+            await wrapper.find("[data-project-path='methods']").trigger("click");
+            await flushPromises();
+            const sharedWorkflowLink = wrapper.find("[data-project-shared-workflow-list-link]");
+            expect(sharedWorkflowLink.attributes("href")).toMatch(/^\/workflows\/list_shared_with_me\?/);
+            expect(filterOf(sharedWorkflowLink.attributes("href"))).toBe("tag:'project:methods'");
+            expect(wrapper.find("[data-project-shared-history-list-link]").exists()).toBe(false);
+        });
+
+        it("hands other tags on a shared card to the shared list", async () => {
+            const { wrapper, router } = await mountView("lung");
+
+            historyList(wrapper, true)!.vm.$emit("tagClick", "qc");
+            await flushPromises();
+            expect(router.currentRoute.value.path).toBe("/histories/list_shared");
+            expect(router.currentRoute.value.query.filter).toBe("tag:'qc'");
+        });
+
+        it("keeps the user's own items and notes the failure when the shared ones can't load", async () => {
+            server.use(
+                http.get("/api/histories", ({ request, response }) => {
+                    if (isSharedRequest(request)) {
+                        return response("5XX").json({ err_code: 500001, err_msg: "Shares broke" }, { status: 500 });
+                    }
+                    return response(200).json(HISTORIES as any);
+                }),
+            );
+            const { wrapper } = await mountView("lung");
+
+            expect(wrapper.find("#projects-error").exists()).toBe(false);
+            expect(wrapper.find("[data-project-shared-error]").text()).toContain("Shares broke");
+            expect(shownHistoryIds(wrapper)).toEqual(["h-lung", "h-scrna"]);
+            expect(historyList(wrapper, true)).toBeUndefined();
+        });
     });
 });

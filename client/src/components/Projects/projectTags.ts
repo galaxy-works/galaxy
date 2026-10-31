@@ -14,8 +14,13 @@ export interface ProjectNode {
 }
 
 export interface ProjectNodeCounts {
+    /** All histories in the node, shared ones included */
     histories: number;
+    /** All workflows in the node, shared ones included */
     workflows: number;
+    /** Of those, the ones other users shared with this user */
+    sharedHistories: number;
+    sharedWorkflows: number;
 }
 
 /** Project paths carried by a tag list, normalized to lower case with no empty segments. */
@@ -131,21 +136,30 @@ export function countNodes(nodes: ProjectNode[]): number {
 
 /**
  * Histories and workflows in each node of the tree, subprojects included. An item tagged with
- * both a project and one of its subprojects counts once for the parent.
+ * both a project and one of its subprojects counts once for the parent. Items shared with the
+ * user count towards the totals and are also counted on their own.
  */
 export function countProjectItems(
     nodes: ProjectNode[],
     historyPaths: Iterable<string[]>,
     workflowPaths: Iterable<string[]>,
+    shared: { histories?: Iterable<string[]>; workflows?: Iterable<string[]> } = {},
 ): Record<string, ProjectNodeCounts> {
     const histories = [...historyPaths];
     const workflows = [...workflowPaths];
+    const sharedHistories = [...(shared.histories ?? [])];
+    const sharedWorkflows = [...(shared.workflows ?? [])];
     const counts: Record<string, ProjectNodeCounts> = {};
-    const within = (paths: string[], nodePath: string) => paths.some((path) => isWithinProject(path, nodePath));
+    const count = (items: string[][], nodePath: string) =>
+        items.filter((paths) => paths.some((path) => isWithinProject(path, nodePath))).length;
     const visit = (node: ProjectNode) => {
+        const sharedHistoryCount = count(sharedHistories, node.path);
+        const sharedWorkflowCount = count(sharedWorkflows, node.path);
         counts[node.path] = {
-            histories: histories.filter((paths) => within(paths, node.path)).length,
-            workflows: workflows.filter((paths) => within(paths, node.path)).length,
+            histories: count(histories, node.path) + sharedHistoryCount,
+            workflows: count(workflows, node.path) + sharedWorkflowCount,
+            sharedHistories: sharedHistoryCount,
+            sharedWorkflows: sharedWorkflowCount,
         };
         node.children.forEach(visit);
     };

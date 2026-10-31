@@ -201,10 +201,22 @@ describe("countProjectItems", () => {
             [["a/b"], ["lung"]],
         );
 
-        expect(counts["lung"]).toEqual({ histories: 2, workflows: 1 });
-        expect(counts["lung/scrna"]).toEqual({ histories: 2, workflows: 0 });
-        expect(counts["lungs"]).toEqual({ histories: 1, workflows: 0 });
-        expect(counts["a"]).toEqual({ histories: 0, workflows: 1 });
-        expect(counts["a/b"]).toEqual({ histories: 0, workflows: 1 });
+        expect(counts["lung"]).toEqual({ histories: 2, workflows: 1, sharedHistories: 0, sharedWorkflows: 0 });
+        expect(counts["lung/scrna"]).toEqual({ histories: 2, workflows: 0, sharedHistories: 0, sharedWorkflows: 0 });
+        expect(counts["lungs"]).toEqual({ histories: 1, workflows: 0, sharedHistories: 0, sharedWorkflows: 0 });
+        expect(counts["a"]).toEqual({ histories: 0, workflows: 1, sharedHistories: 0, sharedWorkflows: 0 });
+        expect(counts["a/b"]).toEqual({ histories: 0, workflows: 1, sharedHistories: 0, sharedWorkflows: 0 });
+    });
+
+    it("adds shared items to the totals and counts them apart", () => {
+        const tree = buildProjectTree(["lung", "lung/scrna", "methods"]);
+        const counts = countProjectItems(tree, [["lung"]], [["methods"]], {
+            histories: [["lung/scrna"], ["lung/scrna"]],
+            workflows: [["lung"]],
+        });
+
+        expect(counts["lung"]).toEqual({ histories: 3, workflows: 1, sharedHistories: 2, sharedWorkflows: 1 });
+        expect(counts["lung/scrna"]).toEqual({ histories: 2, workflows: 0, sharedHistories: 2, sharedWorkflows: 0 });
+        expect(counts["methods"]).toEqual({ histories: 0, workflows: 1, sharedHistories: 0, sharedWorkflows: 0 });
     });
 });

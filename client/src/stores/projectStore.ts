@@ -1,6 +1,10 @@
 /**
  * Project-tagged histories and workflows for the tags-only Projects view. Kept in a store
  * so navigating away from /projects and back reuses the lists instead of refetching them.
+ *
+ * A project is each owner's own tag, but the view also takes in items other users shared with
+ * this user under the same path. Those are kept in their own lists: sharing stays per item, and
+ * nothing here may offer to retag them.
  */
 import { defineStore } from "pinia";
 import { computed, ref, watch } from "vue";
@@ -14,16 +18,33 @@ import { errorMessageAsString } from "@/utils/simple-error";
 /** Everything tagged `project:<anything>`: the raw search term matches on tag name only. */
 const PROJECT_SEARCH = projectTag("");
 
+/** The raw search term also matches item *names* containing "project:", so filter on the tags themselves. */
+function withProjects<T extends { tags?: string[] | null }>(items: T[]): T[] {
+    return items.filter((item) => projectPathsOf(item.tags).length > 0);
+}
+
 export const useProjectStore = defineStore("projectStore", () => {
+    /** The user's own project-tagged histories and workflows. */
     const histories = ref<HistorySummary[]>([]);
     const workflows = ref<WorkflowSummary[]>([]);
+    /** Project-tagged histories and workflows other users shared with this user. */
+    const sharedHistories = ref<HistorySummary[]>([]);
+    const sharedWorkflows = ref<WorkflowSummary[]>([]);
     const loading = ref(false);
     const loaded = ref(false);
     const error = ref<string>();
+    /** Set when only the shared half failed; the own lists are still good. */
+    const sharedError = ref<string>();
 
-    const historyProjects = computed(() => new Map(histories.value.map((h) => [h.id, projectPathsOf(h.tags)])));
-    const workflowProjects = computed(() => new Map(workflows.value.map((w) => [w.id, projectPathsOf(w.tags)])));
-    /** Every project path tagged on at least one history or workflow, without duplicates. */
+    const historyProjects = computed(
+        () => new Map([...histories.value, ...sharedHistories.value].map((h) => [h.id, projectPathsOf(h.tags)])),
+    );
+    const workflowProjects = computed(
+        () => new Map([...workflows.value, ...sharedWorkflows.value].map((w) => [w.id, projectPathsOf(w.tags)])),
+    );
+    const sharedHistoryIds = computed(() => new Set(sharedHistories.value.map((h) => h.id)));
+    const sharedWorkflowIds = computed(() => new Set(sharedWorkflows.value.map((w) => w.id)));
+    /** Every project path tagged on at least one own or shared history or workflow, without duplicates. */
     const projectPaths = computed(() => [
         ...new Set([...historyProjects.value.values(), ...workflowProjects.value.values()].flat()),
     ]);
@@ -46,8 +67,9 @@ export const useProjectStore = defineStore("projectStore", () => {
         const requestGeneration = ++generation;
         loading.value = true;
         error.value = undefined;
+        sharedError.value = undefined;
         try {
-            const [historyResult, workflowResult] = await Promise.all([
+            const [historyResult, workflowResult, sharedResult] = await Promise.all([
                 GalaxyApi().GET("/api/histories", {
                     params: {
                         query: {
@@ -75,6 +97,7 @@ export const useProjectStore = defineStore("projectStore", () => {
                         },
                     },
                 }),
+                loadShared(),
             ]);
             if (requestGeneration !== generation) {
                 return;
@@ -85,11 +108,25 @@ export const useProjectStore = defineStore("projectStore", () => {
                 loaded.value = false;
                 return;
             }
-            // The raw search term also matches item *names* containing "project:", so filter on the tags themselves.
-            histories.value = (historyResult.data as HistorySummary[]).filter((h) => projectPathsOf(h.tags).length > 0);
-            workflows.value = (workflowResult.data as unknown as WorkflowSummary[]).filter(
-                (w) => projectPathsOf(w.tags).length > 0,
-            );
+            histories.value = withProjects(historyResult.data as HistorySummary[]);
+            workflows.value = withProjects(workflowResult.data as unknown as WorkflowSummary[]);
+            if ("error" in sharedResult) {
+                sharedError.value = sharedResult.error;
+                sharedHistories.value = [];
+                sharedWorkflows.value = [];
+            } else {
+                // Guards against the server ever handing back one of the user's own items as shared.
+                const ownHistoryIds = new Set(histories.value.map((h) => h.id));
+                const ownWorkflowIds = new Set(workflows.value.map((w) => w.id));
+                sharedHistories.value = withProjects(sharedResult.histories).filter(
+                    (h) =>
+                        !ownHistoryIds.has(h.id) &&
+                        !userStore.matchesCurrentUsername("username" in h ? String(h.username) : undefined),
+                );
+                sharedWorkflows.value = withProjects(sharedResult.workflows).filter(
+                    (w) => !ownWorkflowIds.has(w.id) && !userStore.matchesCurrentUsername(w.owner),
+                );
+            }
             loaded.value = true;
         } catch (e) {
             if (requestGeneration === generation) {
@@ -100,6 +137,53 @@ export const useProjectStore = defineStore("projectStore", () => {
             if (requestGeneration === generation) {
                 loading.value = false;
             }
+        }
+    }
+
+    /** The shared half never rejects, so its failure can't take the user's own lists down with it. */
+    async function loadShared(): Promise<
+        { histories: HistorySummary[]; workflows: WorkflowSummary[] } | { error: string }
+    > {
+        try {
+            const [historyResult, workflowResult] = await Promise.all([
+                GalaxyApi().GET("/api/histories", {
+                    params: {
+                        query: {
+                            view: "summary",
+                            keys: "username",
+                            search: PROJECT_SEARCH,
+                            show_own: false,
+                            show_published: false,
+                            show_shared: true,
+                            sort_by: "update_time",
+                            sort_desc: true,
+                        },
+                    },
+                }),
+                GalaxyApi().GET("/api/workflows", {
+                    params: {
+                        query: {
+                            // show_shared alone would add shared workflows to the user's own.
+                            search: `${PROJECT_SEARCH} is:shared_with_me`,
+                            show_published: false,
+                            show_shared: true,
+                            skip_step_counts: true,
+                            sort_by: "update_time",
+                            sort_desc: true,
+                        },
+                    },
+                }),
+            ]);
+            const failure = historyResult.error ?? workflowResult.error;
+            if (failure) {
+                return { error: errorMessageAsString(failure) };
+            }
+            return {
+                histories: historyResult.data as HistorySummary[],
+                workflows: workflowResult.data as unknown as WorkflowSummary[],
+            };
+        } catch (e) {
+            return { error: errorMessageAsString(e) };
         }
     }
 
@@ -122,9 +206,12 @@ export const useProjectStore = defineStore("projectStore", () => {
         pending = undefined;
         histories.value = [];
         workflows.value = [];
+        sharedHistories.value = [];
+        sharedWorkflows.value = [];
         loading.value = false;
         loaded.value = false;
         error.value = undefined;
+        sharedError.value = undefined;
     }
 
     // The lists are per user. Only a switch away from a known user resets; the first load of the
@@ -143,12 +230,17 @@ export const useProjectStore = defineStore("projectStore", () => {
     return {
         histories,
         workflows,
+        sharedHistories,
+        sharedWorkflows,
+        sharedHistoryIds,
+        sharedWorkflowIds,
         historyProjects,
         workflowProjects,
         projectPaths,
         loading,
         loaded,
         error,
+        sharedError,
         fetch,
         refresh,
         reset,
