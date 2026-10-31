@@ -33,6 +33,7 @@ import FilterMenu from "@/components/Common/FilterMenu.vue";
 import ContentItem from "@/components/History/Content/ContentItem.vue";
 import ListingLayout from "@/components/History/Layout/ListingLayout.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
+import ProjectMembershipNotice from "@/components/Projects/ProjectMembershipNotice.vue";
 
 interface BackendFilterError {
     err_msg: string;
@@ -453,6 +454,8 @@ const {
                 <HistoryDetails :history="history" :writeable="canEditHistory" :summarized="detailsSummarized" />
 
                 <HistoryMessages v-if="!isMultiViewItem" :history="history" :current-user="currentUser" />
+
+                <ProjectMembershipNotice v-if="!isMultiViewItem && canEditHistory" :history="history" />
 
                 <HistoryCounter
                     v-model:filter-text="filterText"
