@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * A client-only "Projects" page that is nothing more than a view over `project:<path>` tags on
- * the current user's histories and workflows. There is no project model on the server; `/` in
- * the tag value nests projects.
+ * the current user's histories and workflows, plus the ones other users shared with them under
+ * the same path. There is no project model on the server; `/` in the tag value nests projects.
+ * Sharing stays per item: a shared item shows up here only because it was shared on its own.
  */
 import { faFolderOpen, faPlus } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
@@ -11,7 +12,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import { GalaxyApi } from "@/api";
-import type { MyHistory } from "@/api/histories";
+import type { MyHistory, SharedHistory } from "@/api/histories";
 import type { WorkflowInvocation } from "@/api/invocations";
 import { useProjectStore } from "@/stores/projectStore";
 import { useUserStore } from "@/stores/userStore";
@@ -64,10 +65,13 @@ const projectStore = useProjectStore();
 const {
     histories,
     workflows,
+    sharedHistories,
+    sharedWorkflows,
     historyProjects,
     workflowProjects,
     projectPaths,
     error: errorMessage,
+    sharedError,
 } = storeToRefs(projectStore);
 // Only the first load replaces the page with a spinner; a refresh after a card edit keeps the cards up.
 const initialLoading = computed(() => !projectStore.loaded && !projectStore.error);
@@ -81,8 +85,20 @@ let invocationGeneration = 0;
 
 const tree = computed(() => buildProjectTree(projectPaths.value));
 
+function pathsOf(items: { id: string }[], projects: Map<string, string[]>) {
+    return items.map((item) => projects.get(item.id) ?? []);
+}
+
 const treeCounts = computed(() =>
-    countProjectItems(tree.value, historyProjects.value.values(), workflowProjects.value.values()),
+    countProjectItems(
+        tree.value,
+        pathsOf(histories.value, historyProjects.value),
+        pathsOf(workflows.value, workflowProjects.value),
+        {
+            histories: pathsOf(sharedHistories.value, historyProjects.value),
+            workflows: pathsOf(sharedWorkflows.value, workflowProjects.value),
+        },
+    ),
 );
 
 function inScope(paths: string[]): boolean {
@@ -100,6 +116,23 @@ const selectedHistories = computed(
 const selectedWorkflows = computed(() =>
     workflows.value.filter((w) => inScope(workflowProjects.value.get(w.id) ?? [])),
 );
+// Requested with `keys=username`, which the cards read to show the owner and keep the tags read-only.
+const selectedSharedHistories = computed(
+    () => sharedHistories.value.filter((h) => inScope(historyProjects.value.get(h.id) ?? [])) as SharedHistory[],
+);
+const selectedSharedWorkflows = computed(() =>
+    sharedWorkflows.value.filter((w) => inScope(workflowProjects.value.get(w.id) ?? [])),
+);
+
+function ownersOf(owners: (string | undefined)[]) {
+    return [...new Set(owners.filter(Boolean))].sort().join(", ");
+}
+const sharedHistoryOwners = computed(() => ownersOf(selectedSharedHistories.value.map((h) => h.username)));
+const sharedWorkflowOwners = computed(() => ownersOf(selectedSharedWorkflows.value.map((w) => w.owner)));
+
+function countHeading(total: number, shared: number) {
+    return shared ? `${total}, ${shared} shared with you` : `${total}`;
+}
 
 /** Hand-off links to the full lists. Those match one tag exactly, so subprojects never come along. */
 function listLink(listPath: string, tagLists: Iterable<string[] | null | undefined>) {
@@ -116,6 +149,19 @@ const workflowListLink = computed(() =>
     listLink(
         "/workflows/list",
         workflows.value.map((w) => w.tags),
+    ),
+);
+// Each list is matched against its own items' spelling of the tag, which may differ between owners.
+const sharedHistoryListLink = computed(() =>
+    listLink(
+        "/histories/list_shared",
+        sharedHistories.value.map((h) => h.tags),
+    ),
+);
+const sharedWorkflowListLink = computed(() =>
+    listLink(
+        "/workflows/list_shared_with_me",
+        sharedWorkflows.value.map((w) => w.tags),
     ),
 );
 const listLinkNote = computed(() =>
@@ -160,6 +206,9 @@ async function loadInvocations() {
         const pages = await Promise.all([
             ...selectedHistories.value.map((h) => fetchInvocations({ history_id: h.id })),
             ...selectedWorkflows.value.map((w) => fetchInvocations({ workflow_id: w.id })),
+            // The index only returns the user's own runs, e.g. of a lab mate's workflow or in their history.
+            ...selectedSharedHistories.value.map((h) => fetchInvocations({ history_id: h.id })),
+            ...selectedSharedWorkflows.value.map((w) => fetchInvocations({ workflow_id: w.id })),
         ]);
         const byId = new Map<string, WorkflowInvocation>();
         pages.flat().forEach((invocation) => byId.set(invocation.id, invocation));
@@ -180,7 +229,7 @@ async function loadInvocations() {
 }
 
 async function describeInvocation(invocation: WorkflowInvocation): Promise<ProjectInvocation> {
-    const history = histories.value.find((h) => h.id === invocation.history_id);
+    const history = [...histories.value, ...sharedHistories.value].find((h) => h.id === invocation.history_id);
     const historyPaths = history ? (historyProjects.value.get(history.id) ?? []) : [];
     // `invocation.workflow_id` is a workflow *instance* id; resolve it to the stored workflow.
     // One workflow that can't be resolved should not hide every other invocation.
@@ -236,8 +285,10 @@ watch(
         selectedPath.value = path;
     },
 );
-// The store replaces both lists on every (re)load, so this also follows refreshes.
-watch([selectedPath, includeSubprojects, histories, workflows], () => loadInvocations());
+// The store replaces all four lists on every (re)load, so this also follows refreshes.
+watch([selectedPath, includeSubprojects, histories, workflows, sharedHistories, sharedWorkflows], () =>
+    loadInvocations(),
+);
 
 // The store resets itself when the user changes; load the new user's projects.
 watch(
@@ -280,169 +331,230 @@ onMounted(async () => {
             No projects yet. Tag a history or workflow with <code>project:name</code> (use <code>/</code> to nest, e.g.
             <code>project:lung/scrna</code>) and it will show up here.
         </GAlert>
-        <div v-else class="d-flex flex-row flex-grow-1">
-            <div class="project-tree pr-3 mr-3 border-right">
-                <Heading h2 size="sm" separator>Projects ({{ countNodes(tree) }})</Heading>
-                <ul class="list-unstyled">
-                    <ProjectTreeNode
-                        v-for="node in tree"
-                        :key="node.path"
-                        :node="node"
-                        :selected-path="selectedPath"
-                        :counts="treeCounts"
-                        :selected-runs="invocationsLoading || invocationError ? undefined : invocations.length"
-                        @select="selectProject">
-                        <template v-slot:actions="{ node: actionNode }">
+        <div v-else class="d-flex flex-column flex-grow-1">
+            <GAlert v-if="sharedError" variant="warning" show data-project-shared-error>
+                Showing only your own items: failed to load the ones shared with you ({{ sharedError }}).
+            </GAlert>
+            <div class="d-flex flex-row flex-grow-1">
+                <div class="project-tree pr-3 mr-3 border-right">
+                    <Heading h2 size="sm" separator>Projects ({{ countNodes(tree) }})</Heading>
+                    <ul class="list-unstyled">
+                        <ProjectTreeNode
+                            v-for="node in tree"
+                            :key="node.path"
+                            :node="node"
+                            :selected-path="selectedPath"
+                            :counts="treeCounts"
+                            :selected-runs="invocationsLoading || invocationError ? undefined : invocations.length"
+                            @select="selectProject">
+                            <template v-slot:actions="{ node: actionNode }">
+                                <GButton
+                                    icon-only
+                                    transparent
+                                    size="small"
+                                    tooltip
+                                    :title="`New subproject of ${actionNode.path}`"
+                                    :data-new-subproject="actionNode.path"
+                                    @click="openHistoryDialog(actionNode.path, true)">
+                                    <FontAwesomeIcon :icon="faPlus" />
+                                </GButton>
+                            </template>
+                        </ProjectTreeNode>
+                    </ul>
+                </div>
+                <div class="project-details flex-grow-1">
+                    <p v-if="!selectedPath" class="text-muted">
+                        Select a project to see its histories, workflows and invocations.
+                    </p>
+                    <template v-else>
+                        <div class="project-heading d-flex flex-wrap align-items-center mb-2">
+                            <Heading h2 size="md" class="mb-0 mr-2">
+                                <FontAwesomeIcon :icon="faFolderOpen" fixed-width />
+                                {{ selectedPath }}
+                            </Heading>
+                            <LoadingSpan v-if="projectStore.loading" class="ml-2 small" message="Refreshing" />
                             <GButton
-                                icon-only
-                                transparent
+                                class="ml-2"
                                 size="small"
-                                tooltip
-                                :title="`New subproject of ${actionNode.path}`"
-                                :data-new-subproject="actionNode.path"
-                                @click="openHistoryDialog(actionNode.path, true)">
+                                color="blue"
+                                outline
+                                data-description="new history in project"
+                                @click="openHistoryDialog(selectedPath, false)">
                                 <FontAwesomeIcon :icon="faPlus" />
+                                New history in this project
                             </GButton>
-                        </template>
-                    </ProjectTreeNode>
-                </ul>
-            </div>
-            <div class="project-details flex-grow-1">
-                <p v-if="!selectedPath" class="text-muted">
-                    Select a project to see its histories, workflows and invocations.
-                </p>
-                <template v-else>
-                    <div class="project-heading d-flex flex-wrap align-items-center mb-2">
-                        <Heading h2 size="md" class="mb-0 mr-2">
-                            <FontAwesomeIcon :icon="faFolderOpen" fixed-width />
-                            {{ selectedPath }}
-                        </Heading>
-                        <LoadingSpan v-if="projectStore.loading" class="ml-2 small" message="Refreshing" />
-                        <GButton
-                            class="ml-2"
-                            size="small"
-                            color="blue"
-                            outline
-                            data-description="new history in project"
-                            @click="openHistoryDialog(selectedPath, false)">
-                            <FontAwesomeIcon :icon="faPlus" />
-                            New history in this project
-                        </GButton>
-                        <label class="ml-auto mb-0 small">
-                            <input v-model="includeSubprojects" type="checkbox" class="mr-1" />
-                            Include subprojects
-                        </label>
-                    </div>
+                            <label class="ml-auto mb-0 small">
+                                <input v-model="includeSubprojects" type="checkbox" class="mr-1" />
+                                Include subprojects
+                            </label>
+                        </div>
 
-                    <section data-project-histories>
-                        <Heading h3 size="sm" separator>Histories ({{ selectedHistories.length }})</Heading>
-                        <GAlert v-if="selectedHistories.length === 0" variant="info" show>
-                            No histories in this project.
-                        </GAlert>
-                        <HistoryCardList
-                            v-else
-                            :histories="selectedHistories"
-                            @tagClick="(tag: string) => onTagClick('/histories/list', tag)"
-                            @refreshList="onCardsChanged" />
-                        <p class="small mt-1">
-                            <GLink :to="historyListLink" :title="listLinkNote" data-project-history-list-link>
-                                Show all in Histories list
-                            </GLink>
-                            <span v-if="listLinkNote" class="text-muted">(exact tag only, no subprojects)</span>
-                        </p>
-                    </section>
+                        <section data-project-histories>
+                            <Heading h3 size="sm" separator>
+                                Histories ({{
+                                    countHeading(
+                                        selectedHistories.length + selectedSharedHistories.length,
+                                        selectedSharedHistories.length,
+                                    )
+                                }})
+                            </Heading>
+                            <GAlert
+                                v-if="selectedHistories.length === 0 && selectedSharedHistories.length === 0"
+                                variant="info"
+                                show>
+                                No histories in this project.
+                            </GAlert>
+                            <HistoryCardList
+                                v-if="selectedHistories.length"
+                                :histories="selectedHistories"
+                                @tagClick="(tag: string) => onTagClick('/histories/list', tag)"
+                                @refreshList="onCardsChanged" />
+                            <div v-if="selectedSharedHistories.length" class="mt-2" data-project-shared-histories>
+                                <p class="small text-muted mb-1">Shared with you by {{ sharedHistoryOwners }}</p>
+                                <HistoryCardList
+                                    :histories="selectedSharedHistories"
+                                    shared-view
+                                    @tagClick="(tag: string) => onTagClick('/histories/list_shared', tag)"
+                                    @refreshList="onCardsChanged" />
+                            </div>
+                            <p class="small mt-1">
+                                <GLink :to="historyListLink" :title="listLinkNote" data-project-history-list-link>
+                                    Show all in Histories list
+                                </GLink>
+                                <template v-if="selectedSharedHistories.length">
+                                    ·
+                                    <GLink
+                                        :to="sharedHistoryListLink"
+                                        :title="listLinkNote"
+                                        data-project-shared-history-list-link>
+                                        Show all in Histories shared with me
+                                    </GLink>
+                                </template>
+                                <span v-if="listLinkNote" class="text-muted">(exact tag only, no subprojects)</span>
+                            </p>
+                        </section>
 
-                    <section data-project-workflows>
-                        <Heading h3 size="sm" separator>Workflows ({{ selectedWorkflows.length }})</Heading>
-                        <GAlert v-if="selectedWorkflows.length === 0" variant="info" show>
-                            No workflows in this project.
-                        </GAlert>
-                        <WorkflowCardList
-                            v-else
-                            :workflows="selectedWorkflows"
-                            :selectable="false"
-                            :filterable="false"
-                            @tagClick="(tag: string) => onTagClick('/workflows/list', tag)"
-                            @refreshList="onCardsChanged" />
-                        <p class="small mt-1">
-                            <GLink :to="workflowListLink" :title="listLinkNote" data-project-workflow-list-link>
-                                Show all in Workflows list
-                            </GLink>
-                            <span v-if="listLinkNote" class="text-muted">(exact tag only, no subprojects)</span>
-                        </p>
-                    </section>
+                        <section data-project-workflows>
+                            <Heading h3 size="sm" separator>
+                                Workflows ({{
+                                    countHeading(
+                                        selectedWorkflows.length + selectedSharedWorkflows.length,
+                                        selectedSharedWorkflows.length,
+                                    )
+                                }})
+                            </Heading>
+                            <GAlert
+                                v-if="selectedWorkflows.length === 0 && selectedSharedWorkflows.length === 0"
+                                variant="info"
+                                show>
+                                No workflows in this project.
+                            </GAlert>
+                            <WorkflowCardList
+                                v-if="selectedWorkflows.length"
+                                :workflows="selectedWorkflows"
+                                :selectable="false"
+                                :filterable="false"
+                                @tagClick="(tag: string) => onTagClick('/workflows/list', tag)"
+                                @refreshList="onCardsChanged" />
+                            <div v-if="selectedSharedWorkflows.length" class="mt-2" data-project-shared-workflows>
+                                <p class="small text-muted mb-1">Shared with you by {{ sharedWorkflowOwners }}</p>
+                                <WorkflowCardList
+                                    :workflows="selectedSharedWorkflows"
+                                    :selectable="false"
+                                    :filterable="false"
+                                    shared-with-me-view
+                                    @tagClick="(tag: string) => onTagClick('/workflows/list_shared_with_me', tag)"
+                                    @refreshList="onCardsChanged" />
+                            </div>
+                            <p class="small mt-1">
+                                <GLink :to="workflowListLink" :title="listLinkNote" data-project-workflow-list-link>
+                                    Show all in Workflows list
+                                </GLink>
+                                <template v-if="selectedSharedWorkflows.length">
+                                    ·
+                                    <GLink
+                                        :to="sharedWorkflowListLink"
+                                        :title="listLinkNote"
+                                        data-project-shared-workflow-list-link>
+                                        Show all in Workflows shared with me
+                                    </GLink>
+                                </template>
+                                <span v-if="listLinkNote" class="text-muted">(exact tag only, no subprojects)</span>
+                            </p>
+                        </section>
 
-                    <section data-project-invocations>
-                        <Heading h3 size="sm" separator>
-                            Invocations<template v-if="!invocationsLoading"> ({{ invocations.length }})</template>
-                        </Heading>
-                        <GAlert v-if="invocationsLoading" variant="info" show>
-                            <LoadingSpan message="Loading invocations" />
-                        </GAlert>
-                        <GAlert v-else-if="invocationError" variant="danger" show>
-                            Failed to load invocations: {{ invocationError }}
-                        </GAlert>
-                        <GAlert v-else-if="invocations.length === 0" variant="info" show>
-                            No invocations in this project's histories or of this project's workflows.
-                        </GAlert>
-                        <table v-else class="table table-sm project-items">
-                            <thead>
-                                <tr>
-                                    <th>Workflow</th>
-                                    <th>History</th>
-                                    <th>State</th>
-                                    <th>Invoked</th>
-                                    <th>In this project via</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr v-for="row in invocations" :key="row.invocation.id" data-project-invocation>
-                                    <td>
-                                        <GLink :to="`/workflows/invocations/${row.invocation.id}`">{{
-                                            row.workflowName
-                                        }}</GLink>
-                                    </td>
-                                    <td>
-                                        <GLink :to="`/histories/view?id=${row.invocation.history_id}`">{{
-                                            row.historyName
-                                        }}</GLink>
-                                    </td>
-                                    <td>
-                                        <HelpText
-                                            :uri="`galaxy.invocations.states.${row.invocation.state}`"
-                                            :text="row.invocation.state" />
-                                    </td>
-                                    <td><UtcDate :date="row.invocation.create_time" mode="elapsed" /></td>
-                                    <td>
-                                        <span v-if="row.via === 'both'">history and workflow</span>
-                                        <span v-else-if="row.via === 'history'">
-                                            history
-                                            <span class="text-muted small">
-                                                (workflow is in
-                                                {{
-                                                    row.workflowProjects.length
-                                                        ? row.workflowProjects.join(", ")
-                                                        : "no project"
-                                                }})
+                        <section data-project-invocations>
+                            <Heading h3 size="sm" separator>
+                                Invocations<template v-if="!invocationsLoading"> ({{ invocations.length }})</template>
+                            </Heading>
+                            <GAlert v-if="invocationsLoading" variant="info" show>
+                                <LoadingSpan message="Loading invocations" />
+                            </GAlert>
+                            <GAlert v-else-if="invocationError" variant="danger" show>
+                                Failed to load invocations: {{ invocationError }}
+                            </GAlert>
+                            <GAlert v-else-if="invocations.length === 0" variant="info" show>
+                                No invocations in this project's histories or of this project's workflows.
+                            </GAlert>
+                            <table v-else class="table table-sm project-items">
+                                <thead>
+                                    <tr>
+                                        <th>Workflow</th>
+                                        <th>History</th>
+                                        <th>State</th>
+                                        <th>Invoked</th>
+                                        <th>In this project via</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="row in invocations" :key="row.invocation.id" data-project-invocation>
+                                        <td>
+                                            <GLink :to="`/workflows/invocations/${row.invocation.id}`">{{
+                                                row.workflowName
+                                            }}</GLink>
+                                        </td>
+                                        <td>
+                                            <GLink :to="`/histories/view?id=${row.invocation.history_id}`">{{
+                                                row.historyName
+                                            }}</GLink>
+                                        </td>
+                                        <td>
+                                            <HelpText
+                                                :uri="`galaxy.invocations.states.${row.invocation.state}`"
+                                                :text="row.invocation.state" />
+                                        </td>
+                                        <td><UtcDate :date="row.invocation.create_time" mode="elapsed" /></td>
+                                        <td>
+                                            <span v-if="row.via === 'both'">history and workflow</span>
+                                            <span v-else-if="row.via === 'history'">
+                                                history
+                                                <span class="text-muted small">
+                                                    (workflow is in
+                                                    {{
+                                                        row.workflowProjects.length
+                                                            ? row.workflowProjects.join(", ")
+                                                            : "no project"
+                                                    }})
+                                                </span>
                                             </span>
-                                        </span>
-                                        <span v-else>
-                                            workflow
-                                            <span class="text-muted small">
-                                                (history is in
-                                                {{
-                                                    row.historyProjects.length
-                                                        ? row.historyProjects.join(", ")
-                                                        : "no project"
-                                                }})
+                                            <span v-else>
+                                                workflow
+                                                <span class="text-muted small">
+                                                    (history is in
+                                                    {{
+                                                        row.historyProjects.length
+                                                            ? row.historyProjects.join(", ")
+                                                            : "no project"
+                                                    }})
+                                                </span>
                                             </span>
-                                        </span>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </section>
-                </template>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </section>
+                    </template>
+                </div>
             </div>
         </div>
         <ProjectHistoryDialog
