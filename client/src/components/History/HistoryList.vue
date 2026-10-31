@@ -168,8 +168,9 @@ const showBulkPurge = computed(() => selectedHistories.value.some((h) => !h.purg
 const showBulkMultiview = computed(() => selectedHistories.value.length > 1);
 
 const historyListFilters = computed(() => getHistoryListFilters(props.activeList));
-// Projects are the user's own tags, so only their own list follows the current project.
-const { scopeFilter, withScope } = useProjectScope(myView);
+// A project takes in what was shared with the user under the same tag, but published and archived lists stay whole.
+const projectScoped = computed(() => myView.value || sharedView.value);
+const { scopeFilter, withScope } = useProjectScope(projectScoped);
 const rawFilters = computed(() =>
     Object.fromEntries(historyListFilters.value.getFiltersForText(filterText.value, true, false)),
 );
@@ -721,7 +722,7 @@ onMounted(async () => {
                 view="compact"
                 :placeholder="searchPlaceHolder" />
 
-            <ProjectScopeBanner v-if="myView" />
+            <ProjectScopeBanner v-if="projectScoped" />
 
             <ListHeader
                 ref="listHeader"

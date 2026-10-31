@@ -412,6 +412,15 @@ describe("WorkflowList", () => {
             expect(wrapper.find(BANNER).exists()).toBe(false);
         });
 
+        it("scopes the workflows shared with the user to the project too", async () => {
+            const wrapper = await mountWorkflowList("shared_with_me", "/workflows/list_shared_with_me", "lung");
+
+            expect(mockedLoadWorkflows).toHaveBeenLastCalledWith(
+                expect.objectContaining({ filterText: "tag:project:lung is:shared_with_me" }),
+            );
+            expect(wrapper.find(BANNER).text()).toContain("In project lung and its subprojects");
+        });
+
         it("leaves published workflows unscoped", async () => {
             const wrapper = await mountWorkflowList("published", "/workflows/list_published", "lung");
 

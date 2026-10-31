@@ -19,7 +19,7 @@ export function joinFilterText(...terms: Array<string | null | undefined>): stri
 
 /**
  * The current project's scope for a list. `applies` turns it off for views it makes no sense in,
- * e.g. other people's shared or published items.
+ * e.g. published or archived items.
  */
 export function useProjectScope(applies: Ref<boolean> = ref(true)) {
     const store = useProjectContextStore();

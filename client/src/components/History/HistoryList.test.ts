@@ -286,10 +286,19 @@ describe("HistoryList", () => {
             expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:'project:lung'" }));
         });
 
-        it("leaves other people's histories unscoped", async () => {
+        it("scopes the histories shared with the user to the project too", async () => {
             const wrapper = await mountHistoryList("shared", "/histories/list_shared", { project: "lung" });
 
-            expect(getSharedHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
+            expect(getSharedHistories).toHaveBeenLastCalledWith(
+                expect.objectContaining({ search: "tag:project:lung" }),
+            );
+            expect(wrapper.find(BANNER).text()).toContain("In project lung and its subprojects");
+        });
+
+        it("leaves published histories unscoped", async () => {
+            const wrapper = await mountHistoryList("published", "/histories/list_published", { project: "lung" });
+
+            expect(getPublishedHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
             expect(wrapper.find(BANNER).exists()).toBe(false);
         });
     });
