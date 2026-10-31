@@ -348,8 +348,11 @@ describe("historyStore — createNewHistory", () => {
                     updates.push({ id: params.history_id, tags: body.tags });
                     return response(200).json({ id: params.history_id, name: "RNA run", tags: body.tags } as never);
                 }),
-                http.get("/api/histories", ({ response }) => {
-                    projectListRequests += 1;
+                http.get("/api/histories", ({ request, response }) => {
+                    // The project store also asks for shared histories; count only the own-list load.
+                    if (new URL(request.url).searchParams.get("show_own") === "true") {
+                        projectListRequests += 1;
+                    }
                     return response(200).json([]);
                 }),
                 http.get("/api/workflows", ({ response }) => response(200).json([])),
