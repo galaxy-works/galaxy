@@ -15,6 +15,7 @@ import GLink from "@/components/BaseComponents/GLink.vue";
 import GModal from "@/components/BaseComponents/GModal.vue";
 import FilterMenu from "@/components/Common/FilterMenu.vue";
 import HistoryList from "@/components/History/HistoryScrollList.vue";
+import ProjectBar from "@/components/Projects/ProjectBar.vue";
 
 type AdditionalOptions = "set-current" | "multi" | "center";
 type PinnedHistory = { id: string };
@@ -114,6 +115,7 @@ function setFilterValue(newFilter: string, newValue: string) {
         :overflow-visible="showAdvanced"
         :fixed-height="!showAdvanced"
         :title="localize(title)">
+        <ProjectBar v-model:filter-text="filter" />
         <BFormGroup :description="localize('Filter histories')">
             <FilterMenu
                 ref="filterMenuRef"
