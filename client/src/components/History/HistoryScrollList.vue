@@ -20,6 +20,12 @@ import ScrollList from "@/components/ScrollList/ScrollList.vue";
 type AdditionalOptions = "set-current" | "multi" | "center";
 type PinnedHistory = { id: string };
 
+/** Narrows the list to a subset the server can find with `search` and the client can recheck with `includes`. */
+export interface HistoryScope {
+    search: string;
+    includes: (history: HistorySummary) => boolean;
+}
+
 interface Props {
     multiple?: boolean;
     selectedHistories?: PinnedHistory[];
@@ -35,6 +41,7 @@ interface Props {
     /** Increment to explicitly refresh the pinned-history sort snapshot. */
     pinnedOrderResetKey?: number;
     filter?: string;
+    scope?: HistoryScope;
     loading?: boolean;
 }
 
@@ -48,6 +55,7 @@ const props = withDefaults(defineProps<Props>(), {
     inModal: false,
     pinnedOrderResetKey: 0,
     filter: "",
+    scope: undefined,
     loading: false,
 });
 
@@ -68,7 +76,7 @@ const effectiveCurrentId = computed(() =>
     props.currentItemId === undefined ? currentHistoryId.value : props.currentItemId,
 );
 
-const hasNoResults = computed(() => props.filter && filtered.value.length == 0);
+const hasNoResults = computed(() => (props.filter || props.scope) && filtered.value.length == 0);
 const validFilter = computed(() => props.filter && props.filter.length > 2);
 const allLoaded = computed(() => totalHistoryCount.value <= filtered.value.length);
 
@@ -78,7 +86,13 @@ onMounted(async () => {
     if (props.filter !== "" && validFilter.value) {
         await loadMore(true);
     }
+    await loadScope();
 });
+
+watch(
+    () => props.scope?.search,
+    () => loadScope(),
+);
 
 watch(
     () => props.filter,
@@ -126,6 +140,9 @@ const filtered = computed<HistorySummary[]>(() => {
             }
             return true;
         });
+    }
+    if (props.scope) {
+        filteredHistories = filteredHistories.filter(props.scope.includes);
     }
     if (props.hideDeleted) {
         filteredHistories = filteredHistories.filter((h) => !h.deleted && !h.purged);
@@ -221,6 +238,18 @@ async function loadMore(noScroll = false) {
         const queryString = props.filter && HistoriesFilters.getQueryString(props.filter);
         await historyStore.loadHistories(true, queryString);
         busy.value = false;
+    }
+}
+
+/** Loads every history in the scope, which paging through the whole list may not reach for a while. */
+async function loadScope() {
+    if (props.scope?.search) {
+        busy.value = true;
+        try {
+            await historyStore.loadHistories(false, `search=${encodeURIComponent(props.scope.search)}`);
+        } finally {
+            busy.value = false;
+        }
     }
 }
 
@@ -322,7 +351,7 @@ function getHistoryTitleBadges(history: HistorySummary) {
         :prop-busy="busy"
         name="history"
         name-plural="histories"
-        :load-disabled="Boolean(props.filter)"
+        :load-disabled="Boolean(props.filter || props.scope)"
         @load-more="loadMore">
         <template v-slot:search>
             <BBadge v-if="props.filter && !validFilter" class="alert-warning w-100 mb-2">

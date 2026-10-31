@@ -7,6 +7,8 @@ import { computed, ref, watch } from "vue";
 
 import type { HistorySummary } from "@/api";
 import { HistoriesFilters } from "@/components/History/HistoriesFilters";
+import type { HistoryScope } from "@/components/History/HistoryScrollList.vue";
+import { useProjectScope } from "@/components/Projects/projectScope";
 import { useHistoryStore } from "@/stores/historyStore";
 import localize from "@/utils/localization";
 
@@ -15,6 +17,7 @@ import GLink from "@/components/BaseComponents/GLink.vue";
 import GModal from "@/components/BaseComponents/GModal.vue";
 import FilterMenu from "@/components/Common/FilterMenu.vue";
 import HistoryList from "@/components/History/HistoryScrollList.vue";
+import ProjectScopeBanner from "@/components/Projects/ProjectScopeBanner.vue";
 
 type AdditionalOptions = "set-current" | "multi" | "center";
 type PinnedHistory = { id: string };
@@ -59,6 +62,12 @@ const showAdvanced = ref(false);
 const modal = ref<InstanceType<typeof GModal> | null>(null);
 
 const { pinnedHistories } = storeToRefs(useHistoryStore());
+
+const { scopeFilter, inScope } = useProjectScope();
+// The server's tag match is a substring match, so the client rechecks each history's own tags.
+const projectScope = computed<HistoryScope | undefined>(() =>
+    scopeFilter.value ? { search: scopeFilter.value, includes: (history) => inScope(history.tags) } : undefined,
+);
 
 // retain previously selected histories when you reopen the modal in multi view
 watch(
@@ -125,6 +134,8 @@ function setFilterValue(newFilter: string, newValue: string) {
                 :loading="busy" />
         </BFormGroup>
 
+        <ProjectScopeBanner />
+
         <HistoryList
             v-show="!showAdvanced"
             v-model:show-modal="propShowModal"
@@ -135,6 +146,7 @@ function setFilterValue(newFilter: string, newValue: string) {
             :hide-deleted="props.hideDeleted"
             in-modal
             :filter="filter"
+            :scope="projectScope"
             @selectHistory="selectHistory"
             @setFilter="setFilterValue">
             <template v-slot:footer-button-area>
