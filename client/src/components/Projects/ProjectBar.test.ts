@@ -49,6 +49,17 @@ describe("ProjectBar", () => {
         expect(projectStore.fetch).not.toHaveBeenCalled();
     });
 
+    it("steps aside while a browser-wide project is set", async () => {
+        const { wrapper } = mountBar({}, true);
+        expect(wrapper.find("[data-project-bar]").exists()).toBe(true);
+
+        // Actions are stubbed in this pinia, so set the state behind setCurrentProject directly.
+        useProjectContextStore().currentProjectPath = "lung";
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-project-bar]").exists()).toBe(false);
+    });
+
     it("offers All plus the top-level projects and loads them", () => {
         const { wrapper, projectStore } = mountBar();
 

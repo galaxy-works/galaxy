@@ -29,7 +29,11 @@ const emit = defineEmits<{
 }>();
 
 const projectContextStore = useProjectContextStore();
-const { projectsAsField } = storeToRefs(projectContextStore);
+const { projectsAsField, hasCurrentProject } = storeToRefs(projectContextStore);
+
+// Under a browser-wide project the list is already scoped; a chip for another project would
+// only AND the two filters into an empty list, so the bar steps aside until the scope is cleared.
+const shown = computed(() => projectsAsField.value && !hasCurrentProject.value);
 const projectStore = useProjectStore();
 const { histories, projectPaths } = storeToRefs(projectStore);
 
@@ -76,11 +80,7 @@ watch(
 </script>
 
 <template>
-    <nav
-        v-if="projectsAsField"
-        class="project-bar d-flex flex-wrap flex-gapx-1 mb-2"
-        aria-label="Projects"
-        data-project-bar>
+    <nav v-if="shown" class="project-bar d-flex flex-wrap flex-gapx-1 mb-2" aria-label="Projects" data-project-bar>
         <GButton
             size="small"
             color="blue"
