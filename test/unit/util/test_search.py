@@ -99,6 +99,25 @@ def test_parse_filters_structured():
     assert text_terms[2].quoted is False
 
 
+def test_parse_filters_keeps_the_value_of_a_key_value_tag():
+    # An unquoted ``tag:project:lung`` has to reach the tag filter as ``project:lung``, the same way
+    # ``tag:name:foo`` already does, or the search silently widens to every ``project`` tag.
+    result = parse_filters_structured("tag:project:lung", {"tag": "tag"})
+    assert [(t.filter, t.text, t.quoted) for t in result.filter_terms] == [("tag", "project:lung", False)]
+    assert result.text_terms == []
+
+    result = parse_filters_structured("tag:project:lung/bulk-rnaseq other", {"tag": "tag"})
+    assert [(t.filter, t.text) for t in result.filter_terms] == [("tag", "project:lung/bulk-rnaseq")]
+    assert [t.text for t in result.text_terms] == ["other"]
+
+    result = parse_filters_structured("tag:name:foo", {"tag": "tag"})
+    assert [(t.filter, t.text) for t in result.filter_terms] == [("tag", "name:foo")]
+
+    # Quoting still gives the exact form, untouched.
+    result = parse_filters_structured("tag:'project:lung'", {"tag": "tag"})
+    assert [(t.filter, t.text, t.quoted) for t in result.filter_terms] == [("tag", "project:lung", True)]
+
+
 def test_filter_terms_drops_short_raw_terms():
     parsed = parse_filters_structured("Copy of Genomic Assembly and analysis", {})
     filtered = filter_terms(parsed, min_raw_term_length=4, max_raw_terms=None)
