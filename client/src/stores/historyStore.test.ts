@@ -4,10 +4,12 @@ import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HttpResponse, useServerMock } from "@/api/client/__mocks__";
+import { raisedToasts } from "@/composables/__mocks__/toast";
 import { ApiError, MAX_RETRIES } from "@/utils/simple-error";
 
 import { emitSse, sseMockFactory, useVisibilityPatch } from "./_testing/sseStoreSupport";
 import { useHistoryStore } from "./historyStore";
+import { useProjectContextStore } from "./projectContextStore";
 import * as userQueries from "./users/queries";
 import { useUserStore } from "./userStore";
 
@@ -37,6 +39,8 @@ vi.mock("@/watch/watchHistory", () => ({
     watchHistory: (app: unknown) => mockWatchHistory(app),
     refreshHistoryFromPush: (app: unknown) => mockRefreshHistoryFromPush(app),
 }));
+
+vi.mock("@/composables/toast");
 
 vi.mock("@/app", () => ({
     getGalaxyInstance: () => ({ name: "fake-galaxy" }),
@@ -329,6 +333,76 @@ describe("historyStore — createNewHistory", () => {
 
         expect(requested).toEqual(["create RNA run"]);
         expect(store.currentHistoryId).toBe("named-history");
+    });
+
+    describe("with a current project", () => {
+        let updates: { id: string; tags: string[] }[];
+        let projectListRequests: number;
+
+        beforeEach(() => {
+            updates = [];
+            projectListRequests = 0;
+            server.use(
+                http.put("/api/histories/{history_id}", async ({ params, request, response }) => {
+                    const body = (await request.json()) as { tags: string[] };
+                    updates.push({ id: params.history_id, tags: body.tags });
+                    return response(200).json({ id: params.history_id, name: "RNA run", tags: body.tags } as never);
+                }),
+                http.get("/api/histories", ({ response }) => {
+                    projectListRequests += 1;
+                    return response(200).json([]);
+                }),
+                http.get("/api/workflows", ({ response }) => response(200).json([])),
+            );
+        });
+
+        it("tags the new history with the current project and refreshes the project lists", async () => {
+            useProjectContextStore().setCurrentProject("lung/scrna");
+            const store = useHistoryStore();
+
+            await store.createNewHistory("RNA run");
+            await flushPromises();
+
+            expect(updates).toEqual([{ id: "named-history", tags: ["project:lung/scrna"] }]);
+            expect(store.currentHistoryId).toBe("named-history");
+            expect(store.currentHistory?.tags).toEqual(["project:lung/scrna"]);
+            expect(projectListRequests).toBe(1);
+        });
+
+        it("leaves the new history untagged when told to", async () => {
+            useProjectContextStore().setCurrentProject("lung");
+            const store = useHistoryStore();
+
+            await store.createNewHistory("RNA run", { project: null });
+
+            expect(updates).toEqual([]);
+        });
+
+        it("leaves the new history untagged without a current project", async () => {
+            const store = useHistoryStore();
+
+            await store.createNewHistory();
+
+            expect(updates).toEqual([]);
+            expect(projectListRequests).toBe(0);
+        });
+
+        it("keeps the new history and says so when tagging fails", async () => {
+            server.use(
+                http.put("/api/histories/{history_id}", ({ response }) =>
+                    response("5XX").json({ err_msg: "tags are down", err_code: 500 }, { status: 500 }),
+                ),
+            );
+            useProjectContextStore().setCurrentProject("lung");
+            const store = useHistoryStore();
+
+            await expect(store.createNewHistory("RNA run")).resolves.toBeUndefined();
+
+            expect(store.currentHistoryId).toBe("named-history");
+            expect(raisedToasts()).toEqual([
+                expect.objectContaining({ variant: "error", message: expect.stringContaining("project lung") }),
+            ]);
+        });
     });
 });
 

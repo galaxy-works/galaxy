@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useServerMock } from "@/api/client/__mocks__";
 import { useHistoryStore } from "@/stores/historyStore";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { useProjectStore } from "@/stores/projectStore";
 
 import { childProjectPath, useProjectActions, withProjectTag } from "./useProjectActions";
@@ -88,6 +89,15 @@ describe("useProjectActions", () => {
         expect(historyStore.currentHistory?.tags).toEqual(["project:lung/scrna"]);
         expect(projectStore.refresh).toHaveBeenCalled();
         expect(projectRequests).toBe(1);
+    });
+
+    it("tags the new history with the chosen project only, not the current one", async () => {
+        useProjectContextStore().setCurrentProject("brain");
+        const { createHistoryInProject } = useProjectActions();
+
+        await createHistoryInProject("lung", "Run 1");
+
+        expect(updates).toEqual([{ id: "new1", body: { tags: ["project:lung"] } }]);
     });
 
     it("names the new history 'Unnamed history' when no name is given", async () => {
