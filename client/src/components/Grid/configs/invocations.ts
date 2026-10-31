@@ -43,6 +43,13 @@ export async function getData(
     if (extraProps && "user_id" in extraProps) {
         params["user_id"] = extraProps["user_id"];
     }
+    if (extraProps && Array.isArray(extraProps["history_ids"])) {
+        // An empty scope means no history is in it, not "no restriction", so don't ask for everything.
+        if (extraProps["history_ids"].length === 0) {
+            return [[] as WorkflowInvocation[], 0] as const;
+        }
+        params["history_ids"] = extraProps["history_ids"];
+    }
 
     const { response, data, error } = await GalaxyApi().GET("/api/invocations", { params: { query: params } });
     if (error) {

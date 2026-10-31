@@ -98,4 +98,41 @@ describe("invocations grid getData", () => {
         await flushPromises();
         expect(historyRequests).toHaveBeenCalledTimes(2);
     });
+
+    it("passes the history ids it is scoped to as a repeated parameter", async () => {
+        mockServer();
+        const queries: string[][] = [];
+        server.use(
+            http.get("/api/invocations", ({ query, response }) => {
+                queries.push(query.getAll("history_ids"));
+                return response.untyped(
+                    HttpResponse.json(INVOCATIONS.slice(0, 2), { headers: { total_matches: "2" } }),
+                );
+            }),
+        );
+
+        const [data, total] = await getData(0, 25, "", "create_time", true, {
+            history_ids: ["history-1", "history-2"],
+        });
+
+        expect(queries).toEqual([["history-1", "history-2"]]);
+        expect(data).toHaveLength(2);
+        expect(total).toBe(2);
+    });
+
+    it("returns nothing without asking the server when no history is in scope", async () => {
+        const requests = vi.fn();
+        server.use(
+            http.get("/api/invocations", ({ response }) => {
+                requests();
+                return response.untyped(HttpResponse.json(INVOCATIONS, { headers: { total_matches: "4" } }));
+            }),
+        );
+
+        const [data, total] = await getData(0, 25, "", "create_time", true, { history_ids: [] });
+
+        expect(requests).not.toHaveBeenCalled();
+        expect(data).toEqual([]);
+        expect(total).toBe(0);
+    });
 });
