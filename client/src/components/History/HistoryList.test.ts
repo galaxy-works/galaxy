@@ -10,6 +10,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { useServerMock } from "@/api/client/__mocks__";
 import { type AnyHistoryEntry, getMyHistories, getPublishedHistories, getSharedHistories } from "@/api/histories";
 import { raisedToasts } from "@/composables/__mocks__/toast";
+import { useProjectContextStore } from "@/stores/projectContextStore";
 import { updateHistoryFields } from "@/stores/services/history.services";
 import { useUserStore } from "@/stores/userStore";
 
@@ -59,10 +60,11 @@ const MINE = [history("mine_1", "Mine", "me")];
 
 let failSecond = false;
 
-async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string) {
+async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string, project?: string) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
     useUserStore().currentUser = FAKE_USER;
+    useProjectContextStore().setCurrentProject(project);
     let mountRouter = router;
     if (path) {
         mountRouter = createRouter({
@@ -237,6 +239,53 @@ describe("HistoryList", () => {
         const value = (wrapper.find("#history-list-filter input").element as HTMLInputElement).value;
         expect(value).toContain("tag:lung");
         expect(value).toContain("user:'alice'");
+    });
+
+    describe("current project scope", () => {
+        const BANNER = "[data-description='project scope banner']";
+
+        it("sends the scope term with the request but keeps the filter text the user's own", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list?filter=name:foo", "lung");
+
+            expect((wrapper.find("#history-list-filter input").element as HTMLInputElement).value).toBe("name:foo");
+            expect(getMyHistories).toHaveBeenLastCalledWith(
+                expect.objectContaining({ search: "tag:project:lung name:foo" }),
+            );
+            expect(wrapper.find(BANNER).text()).toContain("In project lung and its subprojects");
+        });
+
+        it("scopes an unfiltered list to the project alone", async () => {
+            await mountHistoryList("my", "/histories/list", "lung");
+
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:project:lung" }));
+        });
+
+        it("drops the scope term once the banner's link clears the context", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list", "lung");
+
+            await wrapper.find("[data-description='project scope clear']").trigger("click");
+            await flushPromises();
+
+            expect(useProjectContextStore().currentProject).toBeNull();
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
+
+        it("reloads when the current project changes elsewhere", async () => {
+            await mountHistoryList("my", "/histories/list", "lung");
+
+            useProjectContextStore().includeSubprojects = false;
+            await flushPromises();
+
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:'project:lung'" }));
+        });
+
+        it("leaves other people's histories unscoped", async () => {
+            const wrapper = await mountHistoryList("shared", "/histories/list_shared", "lung");
+
+            expect(getSharedHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
     });
 
     describe("add to project", () => {

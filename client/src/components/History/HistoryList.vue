@@ -44,6 +44,7 @@ import {
 } from "@/api/histories";
 import type HistoryCard from "@/components/History/HistoryCard.vue";
 import { useHistoryCardActions } from "@/components/History/useHistoryCardActions";
+import { useProjectScope } from "@/components/Projects/projectScope";
 import { useProjectActions } from "@/components/Projects/useProjectActions";
 import { useConfirmDialog } from "@/composables/confirmDialog";
 import { useSelectedItems } from "@/composables/selectedItems/selectedItems";
@@ -70,6 +71,7 @@ import TagsSelectionDialog from "@/components/Common/TagsSelectionDialog.vue";
 import HistoryCardList from "@/components/History/HistoryCardList.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
 import AddToProjectDialog from "@/components/Projects/AddToProjectDialog.vue";
+import ProjectScopeBanner from "@/components/Projects/ProjectScopeBanner.vue";
 
 /**
  * Represents a selected history item with minimal required data
@@ -165,6 +167,8 @@ const showBulkPurge = computed(() => selectedHistories.value.some((h) => !h.purg
 const showBulkMultiview = computed(() => selectedHistories.value.length > 1);
 
 const historyListFilters = computed(() => getHistoryListFilters(props.activeList));
+// Projects are the user's own tags, so only their own list follows the current project.
+const { scopeFilter, withScope } = useProjectScope(myView);
 const rawFilters = computed(() =>
     Object.fromEntries(historyListFilters.value.getFiltersForText(filterText.value, true, false)),
 );
@@ -195,7 +199,7 @@ const {
     onClick,
     onKeyDown,
 } = useSelectedItems<AnyHistoryEntry, typeof HistoryCard>({
-    scopeKey: computed(() => `${props.activeList}-histories-${filterText.value}`),
+    scopeKey: computed(() => `${props.activeList}-histories-${scopeFilter.value}-${filterText.value}`),
     getItemKey: (item) => item.id,
     filterText: filterText,
     totalItemsInQuery: computed(() => totalHistories.value ?? 0),
@@ -262,7 +266,7 @@ async function load(overlayLoading: boolean = false, silent: boolean = false) {
     const options = {
         limit: limit.value,
         offset: offset.value,
-        search: validatedFilterText(),
+        search: withScope(validatedFilterText()),
         sortBy: sortBy.value,
         sortDesc: sortDesc.value,
     };
@@ -624,7 +628,7 @@ async function onBulkOpenInMultiview() {
  * Watches for changes in filter text, sort options, and sort direction
  * to reload the history list with updated parameters
  */
-watch([filterText, sortBy, sortDesc], async () => {
+watch([filterText, scopeFilter, sortBy, sortDesc], async () => {
     offset.value = 0;
 
     resetSelection();
@@ -713,6 +717,8 @@ onMounted(async () => {
                 :loading="loading || overlay"
                 view="compact"
                 :placeholder="searchPlaceHolder" />
+
+            <ProjectScopeBanner v-if="myView" />
 
             <ListHeader
                 ref="listHeader"
