@@ -60,7 +60,8 @@ export function useProjectActions() {
      */
     async function createHistoryInProject(path: string, name?: string): Promise<string> {
         const normalized = checkedProjectPath(path);
-        await historyStore.createNewHistory(name?.trim() || DEFAULT_HISTORY_NAME);
+        // Tagged below with this project alone, not also with the current one.
+        await historyStore.createNewHistory(name?.trim() || DEFAULT_HISTORY_NAME, { project: null });
         const historyId = historyStore.currentHistoryId;
         if (!historyId) {
             throw new Error("The new history could not be found.");

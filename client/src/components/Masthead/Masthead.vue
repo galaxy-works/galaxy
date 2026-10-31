@@ -25,6 +25,7 @@ import { loadMastheadWebhooks } from "./_webhooks";
 
 import MastheadDropdown from "./MastheadDropdown.vue";
 import MastheadItem from "./MastheadItem.vue";
+import ProjectContextSelector from "./ProjectContextSelector.vue";
 import QuotaMeter from "./QuotaMeter.vue";
 
 const { isAnonymous, currentUser } = storeToRefs(useUserStore());
@@ -189,6 +190,7 @@ onMounted(() => {
                     <kbd>{{ shortcutLabel }}</kbd>
                 </button>
             </li>
+            <ProjectContextSelector v-if="currentUser && !isAnonymous" />
             <MastheadItem
                 id="help"
                 :icon="faQuestion"

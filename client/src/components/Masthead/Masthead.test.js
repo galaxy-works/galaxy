@@ -92,8 +92,8 @@ describe("Masthead.vue", () => {
     }
 
     it("should render simple tab item links", () => {
-        // window manager, extension tab, command palette search, help, user
-        expect(wrapper.findAll("li.nav-item").length).toBe(5);
+        // window manager, extension tab, command palette search, project context, help, user
+        expect(wrapper.findAll("li.nav-item").length).toBe(6);
         // Ensure specified link title respected.
         expect(wrapper.find("#help").text()).toBe("Support, Contact, and Community");
         expect(wrapper.find("#help a").attributes("href")).toBe("/about");

@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
-import { computed } from "vue";
+import { computed, watch } from "vue";
 
 import type { WorkflowInvocation } from "@/api/invocations";
 import invocationsGridConfig from "@/components/Grid/configs/invocations";
 import invocationsBatchConfig from "@/components/Grid/configs/invocationsBatch";
 import invocationsHistoryGridConfig from "@/components/Grid/configs/invocationsHistory";
 import invocationsWorkflowGridConfig from "@/components/Grid/configs/invocationsWorkflow";
+import { useProjectContextStore } from "@/stores/projectContextStore";
+import { useProjectStore } from "@/stores/projectStore";
 import { useUserStore } from "@/stores/userStore";
 
 import type { GridConfig } from "./configs/types";
 
 import Heading from "../Common/Heading.vue";
+import LoadingSpan from "../LoadingSpan.vue";
 import UtcDate from "../UtcDate.vue";
 import WorkflowInvocationState from "../WorkflowInvocationState/WorkflowInvocationState.vue";
+import GAlert from "@/components/BaseComponents/GAlert.vue";
 import GridList from "@/components/Grid/GridList.vue";
+import ProjectScopeBanner from "@/components/Projects/ProjectScopeBanner.vue";
 
 interface Props {
     noInvocationsMessage?: string;
@@ -39,6 +44,36 @@ const { currentUser } = storeToRefs(useUserStore());
 const forStoredWorkflow = computed(() => props.filteredFor?.type === "StoredWorkflow");
 const forHistory = computed(() => props.filteredFor?.type === "History");
 const forBatch = computed(() => !!props.invocationsList?.length);
+
+const projectContextStore = useProjectContextStore();
+const projectStore = useProjectStore();
+
+// Only the user's own, otherwise unfiltered list follows the current project.
+const projectScoped = computed(
+    () => props.ownerGrid && !props.filteredFor && !forBatch.value && projectContextStore.hasCurrentProject,
+);
+
+watch(
+    projectScoped,
+    (scoped) => {
+        if (scoped) {
+            projectStore.fetch();
+        }
+    },
+    { immediate: true },
+);
+
+const scopedHistoryIds = computed(() => {
+    if (!projectScoped.value) {
+        return undefined;
+    }
+    return [...projectStore.historyProjects.entries()]
+        .filter(([, paths]) => paths.some((path) => projectContextStore.isInCurrentProject(path)))
+        .map(([id]) => id);
+});
+
+// The grid only loads on mount, so it is remounted whenever the histories in scope change.
+const gridKey = computed(() => scopedHistoryIds.value?.join(",") ?? "all");
 
 const effectiveNoInvocationsMessage = computed(() => {
     let message = props.noInvocationsMessage;
@@ -67,6 +102,7 @@ const extraProps = computed(() => {
     const params: {
         workflow_id?: string;
         history_id?: string;
+        history_ids?: string[];
         include_terminal?: boolean;
         user_id?: string;
     } = {};
@@ -75,6 +111,9 @@ const extraProps = computed(() => {
     }
     if (forHistory.value) {
         params.history_id = props.filteredFor?.id;
+    }
+    if (scopedHistoryIds.value) {
+        params.history_ids = scopedHistoryIds.value;
     }
     if (!props.ownerGrid) {
         params.include_terminal = false;
@@ -105,8 +144,16 @@ function refreshTable() {
         <div v-if="!hideHeading && (forStoredWorkflow || forHistory)" class="d-flex">
             <Heading h1 separator inline truncate size="lg" class="flex-grow-1 mb-2">{{ effectiveTitle }}</Heading>
         </div>
+        <ProjectScopeBanner v-if="projectScoped" />
+        <GAlert v-if="projectScoped && projectStore.error" variant="danger" show>
+            Could not load the histories in this project: {{ projectStore.error }}
+        </GAlert>
+        <GAlert v-else-if="projectScoped && !projectStore.loaded" variant="info" show>
+            <LoadingSpan message="Loading the histories in this project" />
+        </GAlert>
         <GridList
-            v-if="!currentUser?.isAnonymous && currentUser?.id"
+            v-else-if="!currentUser?.isAnonymous && currentUser?.id"
+            :key="gridKey"
             class="grid-invocation"
             :grid-config="gridConfig"
             :grid-message="props.headerMessage"

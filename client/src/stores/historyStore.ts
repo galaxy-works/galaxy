@@ -21,12 +21,16 @@ import {
 import type { ArchivedHistoryDetailed } from "@/api/histories.archived";
 import { getGalaxyInstance } from "@/app";
 import { HistoryFilters } from "@/components/History/HistoryFilters";
+import { projectPathsOf, projectTag } from "@/components/Projects/projectTags";
 import { useResourceWatcher } from "@/composables/resourceWatcher";
 import { useRetryGate } from "@/composables/retryGate";
+import { Toast } from "@/composables/toast";
 import { useSSE } from "@/composables/useNotificationSSE";
 import { useUserLocalStorage } from "@/composables/userLocalStorage";
 import { useConfigStore } from "@/stores/configurationStore";
 import { useHistoryItemsStore } from "@/stores/historyItemsStore";
+import { useProjectContextStore } from "@/stores/projectContextStore";
+import { useProjectStore } from "@/stores/projectStore";
 import {
     createAndSelectNewHistory,
     getCurrentHistoryFromServer,
@@ -36,7 +40,7 @@ import {
     setCurrentHistoryOnServer,
     updateHistoryFields,
 } from "@/stores/services/history.services";
-import { ApiError, isRetryableApiError, rethrowSimple } from "@/utils/simple-error";
+import { ApiError, errorMessageAsString, isRetryableApiError, rethrowSimple } from "@/utils/simple-error";
 import { sortByObjectProp } from "@/utils/sorting";
 import {
     ACTIVE_POLLING_INTERVAL,
@@ -374,8 +378,13 @@ export const useHistoryStore = defineStore("historyStore", () => {
         return setCurrentHistory(newHistory.id);
     }
 
-    /** Creates and selects a history after any earlier selection changes finish. */
-    function createNewHistory(name?: string): Promise<void> {
+    /**
+     * Creates and selects a history after any earlier selection changes finish. The new history is
+     * tagged with `project`, which defaults to the browser-wide current project; pass `null` to
+     * leave it untagged.
+     */
+    function createNewHistory(name?: string, options: { project?: string | null } = {}): Promise<void> {
+        const project = options.project === undefined ? useProjectContextStore().currentProject : options.project;
         return queueHistoryChange(async () => {
             const newHistory = (await createAndSelectNewHistory(name)) as HistoryDevDetailed;
             selectHistory(newHistory);
@@ -385,7 +394,24 @@ export const useHistoryStore = defineStore("historyStore", () => {
             } catch (error) {
                 console.debug("Could not refresh the history count", error);
             }
+            if (project) {
+                await tagNewHistoryWithProject(newHistory, project);
+            }
         });
+    }
+
+    async function tagNewHistoryWithProject(history: HistoryDevDetailed, project: string) {
+        const tags = history.tags ?? [];
+        if (projectPathsOf(tags).includes(project)) {
+            return;
+        }
+        // Like the count refresh above, a failure here must not read as a failed creation.
+        try {
+            await updateHistory(history.id, { tags: [...tags, projectTag(project)] });
+            await useProjectStore().refresh();
+        } catch (error) {
+            Toast.error(`The new history could not be added to project ${project}: ${errorMessageAsString(error)}`);
+        }
     }
 
     function getNextAvailableHistoryId(excludedIds: string[]) {

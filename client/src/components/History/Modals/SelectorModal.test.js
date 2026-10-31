@@ -2,7 +2,7 @@ import { getFakeRegisteredUser } from "@tests/test-data";
 import { emittedArg, getLocalVue } from "@tests/vitest/helpers";
 import { mount } from "@vue/test-utils";
 import flushPromises from "flush-promises";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
 import { describe, expect, it } from "vitest";
 
 import { useServerMock } from "@/api/client/__mocks__";
@@ -172,6 +172,66 @@ describe("History SelectorModal.vue", () => {
             await button.trigger("click");
 
             expect(emittedArg(wrapper, "selectHistories")[0].id).toBe(targetHistoryId1);
+        });
+    });
+
+    describe("with a current project", () => {
+        const scopedHistories = getFakeHistorySummaries(15).map((history) => {
+            const tags = { "ID-3": ["project:lung"], "ID-4": ["project:lungs"], "ID-12": ["project:lung/scrna"] };
+            return { ...history, tags: tags[history.id] ?? [] };
+        });
+        let searches;
+
+        async function mountScoped(project) {
+            searches = [];
+            server.use(
+                http.get("/api/histories", ({ response, query }) => {
+                    const search = query.get("search");
+                    if (search !== null) {
+                        searches.push(search);
+                        // the server's unquoted tag match is a substring match, so `lungs` comes back too
+                        return response(200).json(
+                            scopedHistories.filter((h) => h.tags.some((tag) => tag.startsWith("project:lung"))),
+                        );
+                    }
+                    const offset = Number(query.get("offset")) || 0;
+                    const limit = Number(query.get("limit")) || 10;
+                    return response(200).json(scopedHistories.slice(offset, offset + limit));
+                }),
+                http.get("/api/histories/count", ({ response }) => {
+                    return response(200).json(scopedHistories.length);
+                }),
+            );
+            const pinia = createPinia();
+            setActivePinia(pinia);
+            useUserStore().setCurrentUser(getFakeRegisteredUser(CURRENT_USER));
+            useProjectContextStore().setCurrentProject(project);
+            historyStore = useHistoryStore();
+            await historyStore.loadHistories();
+            wrapper = mount(SelectorModal, { props: PROPS_FOR_MODAL, global: localVue, pinia });
+            await flushPromises();
+        }
+
+        function shownIds() {
+            return wrapper.findAllComponents(GCard).map((card) => card.attributes("data-pk"));
+        }
+
+        it("asks the server for the project's histories and shows only those inside it", async () => {
+            await mountScoped("lung");
+
+            expect(searches).toEqual(["tag:project:lung"]);
+            expect(shownIds().sort()).toEqual(["ID-12", "ID-3"]);
+            expect(wrapper.find("[data-description='project scope banner']").text()).toContain("In project lung");
+        });
+
+        it("shows every history again once the context is cleared", async () => {
+            await mountScoped("lung");
+
+            await wrapper.find("[data-description='project scope clear']").trigger("click");
+            await flushPromises();
+
+            expect(shownIds().length).toBeGreaterThan(2);
+            expect(wrapper.find("[data-description='project scope banner']").exists()).toBe(false);
         });
     });
 });

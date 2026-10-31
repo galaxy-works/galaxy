@@ -60,11 +60,17 @@ const MINE = [history("mine_1", "Mine", "me")];
 
 let failSecond = false;
 
-async function mountHistoryList(activeList: "my" | "shared" | "published", path?: string, projectsAsField = false) {
+async function mountHistoryList(
+    activeList: "my" | "shared" | "published",
+    path?: string,
+    options: { project?: string; projectsAsField?: boolean } = {},
+) {
     const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
     setActivePinia(pinia);
     useUserStore().currentUser = FAKE_USER;
-    useProjectContextStore().projectsAsField = projectsAsField;
+    const projectContextStore = useProjectContextStore();
+    projectContextStore.setCurrentProject(options.project);
+    projectContextStore.projectsAsField = options.projectsAsField ?? false;
     let mountRouter = router;
     if (path) {
         mountRouter = createRouter({
@@ -241,6 +247,53 @@ describe("HistoryList", () => {
         expect(value).toContain("user:'alice'");
     });
 
+    describe("current project scope", () => {
+        const BANNER = "[data-description='project scope banner']";
+
+        it("sends the scope term with the request but keeps the filter text the user's own", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list?filter=name:foo", { project: "lung" });
+
+            expect((wrapper.find("#history-list-filter input").element as HTMLInputElement).value).toBe("name:foo");
+            expect(getMyHistories).toHaveBeenLastCalledWith(
+                expect.objectContaining({ search: "tag:project:lung name:foo" }),
+            );
+            expect(wrapper.find(BANNER).text()).toContain("In project lung and its subprojects");
+        });
+
+        it("scopes an unfiltered list to the project alone", async () => {
+            await mountHistoryList("my", "/histories/list", { project: "lung" });
+
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:project:lung" }));
+        });
+
+        it("drops the scope term once the banner's link clears the context", async () => {
+            const wrapper = await mountHistoryList("my", "/histories/list", { project: "lung" });
+
+            await wrapper.find("[data-description='project scope clear']").trigger("click");
+            await flushPromises();
+
+            expect(useProjectContextStore().currentProject).toBeNull();
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
+
+        it("reloads when the current project changes elsewhere", async () => {
+            await mountHistoryList("my", "/histories/list", { project: "lung" });
+
+            useProjectContextStore().includeSubprojects = false;
+            await flushPromises();
+
+            expect(getMyHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "tag:'project:lung'" }));
+        });
+
+        it("leaves other people's histories unscoped", async () => {
+            const wrapper = await mountHistoryList("shared", "/histories/list_shared", { project: "lung" });
+
+            expect(getSharedHistories).toHaveBeenLastCalledWith(expect.objectContaining({ search: "" }));
+            expect(wrapper.find(BANNER).exists()).toBe(false);
+        });
+    });
+
     describe("add to project", () => {
         async function addSelectedToProject(path: string, move: boolean) {
             const histories = [
@@ -299,7 +352,7 @@ describe("HistoryList", () => {
         });
 
         it("filters the list on the exact project tag and clears it again", async () => {
-            const wrapper = await mountHistoryList("my", "/histories/list", true);
+            const wrapper = await mountHistoryList("my", "/histories/list", { projectsAsField: true });
 
             await wrapper.find("[data-project-bar-chip='lung']").trigger("click");
             await flushPromises();

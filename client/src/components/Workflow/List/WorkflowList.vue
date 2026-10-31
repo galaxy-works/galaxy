@@ -7,6 +7,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { loadWorkflows, undeleteWorkflow, unshareWorkflowWithMe, type WorkflowSummary } from "@/api/workflows";
+import { useProjectScope } from "@/components/Projects/projectScope";
 import { getWorkflowFilters, helpHtml } from "@/components/Workflow/List/workflowFilters";
 import { deleteWorkflow, updateWorkflow } from "@/components/Workflow/workflows.services";
 import { useConfirmDialog } from "@/composables/confirmDialog";
@@ -32,6 +33,7 @@ import Heading from "@/components/Common/Heading.vue";
 import ListHeader from "@/components/Common/ListHeader.vue";
 import TagsSelectionDialog from "@/components/Common/TagsSelectionDialog.vue";
 import LoadingSpan from "@/components/LoadingSpan.vue";
+import ProjectScopeBanner from "@/components/Projects/ProjectScopeBanner.vue";
 import WorkflowListActions from "@/components/Workflow/List/WorkflowListActions.vue";
 import WorkflowListTabs from "@/components/Workflow/List/WorkflowListTabs.vue";
 
@@ -87,6 +89,9 @@ const searchPlaceHolder = computed(() => {
 
 const published = computed(() => props.activeList === "published");
 const sharedWithMe = computed(() => props.activeList === "shared_with_me");
+const myView = computed(() => props.activeList === "my");
+// Projects are the user's own tags, so only their own list follows the current project.
+const { scopeFilter, withScope } = useProjectScope(myView);
 const showDeleted = computed(() => filterText.value.includes("is:deleted"));
 const showBookmarked = computed(() => filterText.value.includes("is:bookmarked"));
 const currentPage = computed(() => Math.floor(offset.value / limit.value) + 1);
@@ -134,7 +139,7 @@ const {
     onClick,
     onKeyDown,
 } = useSelectedItems<WorkflowSummary, typeof WorkflowCard>({
-    scopeKey: computed(() => `${props.activeList}-workflows-${filterText.value}`),
+    scopeKey: computed(() => `${props.activeList}-workflows-${scopeFilter.value}-${filterText.value}`),
     getItemKey: (item) => item.id,
     filterText: filterText,
     totalItemsInQuery: computed(() => totalWorkflows.value ?? 0),
@@ -189,7 +194,7 @@ async function load(overlayLoading = false, silent = false) {
     let search;
 
     if (!hasInvalidFilters.value) {
-        search = validatedFilterText();
+        search = withScope(validatedFilterText());
 
         // append default backend query filters for provided `props.activeList`
         if (published.value && !workflowFilters.value.getFilterValue(search, "published")) {
@@ -444,7 +449,7 @@ async function onBulkTagsAdd(tags: string[]) {
     }
 }
 
-watch([filterText, sortBy, sortDesc], async () => {
+watch([filterText, scopeFilter, sortBy, sortDesc], async () => {
     offset.value = 0;
 
     resetSelection();
@@ -486,6 +491,8 @@ onMounted(() => {
                     <div v-sanitize-html="helpHtml(activeList, userStore.isAnonymous)"></div>
                 </template>
             </FilterMenu>
+
+            <ProjectScopeBanner v-if="myView" />
 
             <ListHeader
                 ref="listHeader"
