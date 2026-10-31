@@ -214,7 +214,7 @@ describe("WorkflowRunForm", () => {
             expect(updateHistoryFields).toHaveBeenCalledWith("new_history_id", { tags: ["project:lung"] });
         });
 
-        it("changes nothing while projects are shown as tags", async () => {
+        it("hides the picker while projects are shown as tags but still inherits the current project", async () => {
             const wrapper = mountForm(true, false);
 
             await sendToNewHistory(wrapper);
@@ -222,7 +222,7 @@ describe("WorkflowRunForm", () => {
             await run(wrapper);
 
             expect(wrapper.emitted("submissionSuccess")).toHaveLength(1);
-            expect(updateHistoryFields).not.toHaveBeenCalled();
+            expect(updateHistoryFields).toHaveBeenCalledWith("new_history_id", { tags: ["project:lung"] });
         });
     });
 });

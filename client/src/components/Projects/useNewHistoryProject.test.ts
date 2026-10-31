@@ -61,9 +61,19 @@ describe("useNewHistoryProject", () => {
         expect(projectStore.refresh).toHaveBeenCalledTimes(1);
     });
 
-    it("does nothing while projects are shown as tags or without a project", async () => {
-        await setup({ asField: false, currentProject: "lung" }).tagNewHistories([{ history_id: "new1" }]);
+    it("still inherits the current project while projects are shown as tags", async () => {
+        await setup({ asField: false, currentProject: "lung", currentHistoryTags: ["project:brain"] }).tagNewHistories([
+            { history_id: "new1" },
+        ]);
+
+        expect(vi.mocked(updateHistoryFields).mock.calls).toEqual([["new1", { tags: ["project:lung"] }]]);
+    });
+
+    it("does nothing without a project, and ignores the current history's project while projects are tags", async () => {
         await setup().tagNewHistories([{ history_id: "new1" }]);
+        await setup({ asField: false, currentHistoryTags: ["project:brain"] }).tagNewHistories([
+            { history_id: "new1" },
+        ]);
 
         expect(updateHistoryFields).not.toHaveBeenCalled();
     });

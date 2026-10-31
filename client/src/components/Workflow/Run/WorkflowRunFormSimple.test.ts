@@ -123,11 +123,22 @@ describe("WorkflowRunFormSimple project picker", () => {
         expect(wrapper.emitted("submissionError")).toBeUndefined();
     });
 
-    it("leaves the form and the new history alone while projects are shown as tags", async () => {
+    it("hides the picker while projects are shown as tags but still inherits the current project", async () => {
         const wrapper = mountForm({ asField: false, currentProject: "lung" });
         await flushPromises();
 
         expect(wrapper.find(".history-name-input").exists()).toBe(true);
+        expect(wrapper.find("#new-history-project").exists()).toBe(false);
+
+        await run(wrapper);
+
+        expect(wrapper.emitted("submissionSuccess")).toHaveLength(1);
+        expect(updateHistoryFields).toHaveBeenCalledWith("new_history_id", { tags: ["project:lung"] });
+    });
+
+    it("leaves the new history alone while projects are shown as tags and no project is current", async () => {
+        const wrapper = mountForm({ asField: false });
+        await flushPromises();
         expect(wrapper.find("#new-history-project").exists()).toBe(false);
 
         await run(wrapper);

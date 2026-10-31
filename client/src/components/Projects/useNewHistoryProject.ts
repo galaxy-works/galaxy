@@ -39,8 +39,10 @@ export function useNewHistoryProject() {
      * run itself has already succeeded, so a failure here is only a warning.
      */
     async function tagNewHistories(invocations: unknown) {
-        const path = newHistoryProject.value;
-        if (!projectsAsField.value || !path) {
+        // Without the picker the run form shows nothing about projects, so only the browser-wide
+        // current project applies then, the same way a history created from the panel inherits it.
+        const path = projectsAsField.value ? newHistoryProject.value : projectContextStore.currentProject;
+        if (!path) {
             return;
         }
         const list = (Array.isArray(invocations) ? invocations : [invocations]) as { history_id?: string }[];
