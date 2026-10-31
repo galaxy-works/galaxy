@@ -79,6 +79,17 @@ export function tagListFilter(tag: string): string {
     return `tag:'${tag}'`;
 }
 
+/**
+ * A history or workflow list filter scoping to `path`. Exact when subprojects are excluded. With
+ * subprojects the unquoted form is used, which the server matches as `project` name plus a value
+ * *containing* the path, so `lung` also catches `lung/scrna` (and, until the server grows a prefix
+ * match, a sibling like `lungs`).
+ */
+export function projectScopeFilter(path: string, includeSubprojects = true): string {
+    const tag = projectTag(path);
+    return includeSubprojects ? `tag:${tag}` : tagListFilter(tag);
+}
+
 /** True when `path` is `nodePath` itself or nested below it. */
 export function isWithinProject(path: string, nodePath: string): boolean {
     return path === nodePath || path.startsWith(`${nodePath}/`);

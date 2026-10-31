@@ -9,6 +9,7 @@ import {
     PROJECT_TAG_NAME,
     projectPathProblem,
     projectPathsOf,
+    projectScopeFilter,
     projectTag,
     tagListFilter,
 } from "./projectTags";
@@ -177,5 +178,15 @@ describe("exactProjectTag", () => {
 describe("tagListFilter", () => {
     it("quotes the tag so the whole name:value is matched", () => {
         expect(tagListFilter("project:lung/scrna")).toBe("tag:'project:lung/scrna'");
+    });
+});
+
+describe("projectScopeFilter", () => {
+    it("matches the project and everything below it by default", () => {
+        expect(projectScopeFilter("lung")).toBe("tag:project:lung");
+    });
+
+    it("matches only the project itself when subprojects are excluded", () => {
+        expect(projectScopeFilter("lung", false)).toBe("tag:'project:lung'");
     });
 });
