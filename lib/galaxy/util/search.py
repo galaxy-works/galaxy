@@ -40,7 +40,8 @@ def parse_filters_structured(
     search_space = search_term.replace('"', "'")
     filters = filters or {}
     filter_keys = "|".join(list(filters.keys()))
-    pattern = rf"({filter_keys}):(?:\s+)?([\w-]+|'.*?')(:\w+)?"
+    # The optional third group is the value of a key:value tag (``tag:name:foo``, ``tag:project:lung/a``).
+    pattern = rf"({filter_keys}):(?:\s+)?([\w-]+|'.*?')(:[\w./-]+)?"
     reserved = re.compile(pattern)
     parsed_search = ParsedSearch()
     while True:
@@ -56,7 +57,7 @@ def parse_filters_structured(
         else:
             first_group = match.groups()[0]
             if first_group in filters:
-                if match.groups()[0] == "tag" and match.groups()[1] == "name" and match.groups()[2] is not None:
+                if match.groups()[0] == "tag" and match.groups()[2] is not None:
                     group = match.groups()[1] + match.groups()[2].strip()
                 else:
                     group = match.groups()[1].strip()
