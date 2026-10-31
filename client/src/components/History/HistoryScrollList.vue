@@ -241,12 +241,22 @@ async function loadMore(noScroll = false) {
     }
 }
 
-/** Loads every history in the scope, which paging through the whole list may not reach for a while. */
+// Scoped lists can't page, so one fill has to bring in every history of the project.
+const SCOPE_FETCH_LIMIT = 1000;
+
+/**
+ * Loads every history in the scope, which paging through the whole list may not reach for a while.
+ * Goes through the cache fill rather than the paginated load, which would quietly do nothing while
+ * the list's own first page is still loading.
+ */
 async function loadScope() {
     if (props.scope?.search) {
         busy.value = true;
         try {
-            await historyStore.loadHistories(false, `search=${encodeURIComponent(props.scope.search)}`);
+            await historyStore.fetchOwnHistories({
+                search: `search=${encodeURIComponent(props.scope.search)}`,
+                limit: SCOPE_FETCH_LIMIT,
+            });
         } finally {
             busy.value = false;
         }
