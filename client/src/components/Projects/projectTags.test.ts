@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     buildProjectTree,
     countNodes,
+    countProjectItems,
     exactProjectTag,
     isWithinProject,
     normalizeProjectPath,
@@ -188,5 +189,22 @@ describe("projectScopeFilter", () => {
 
     it("matches only the project itself when subprojects are excluded", () => {
         expect(projectScopeFilter("lung", false)).toBe("tag:'project:lung'");
+    });
+});
+
+describe("countProjectItems", () => {
+    it("counts items in each node including subprojects, once per item", () => {
+        const tree = buildProjectTree(["lung", "lung/scrna", "lungs", "a/b"]);
+        const counts = countProjectItems(
+            tree,
+            [["lung", "lung/scrna"], ["lung/scrna"], ["lungs"]],
+            [["a/b"], ["lung"]],
+        );
+
+        expect(counts["lung"]).toEqual({ histories: 2, workflows: 1 });
+        expect(counts["lung/scrna"]).toEqual({ histories: 2, workflows: 0 });
+        expect(counts["lungs"]).toEqual({ histories: 1, workflows: 0 });
+        expect(counts["a"]).toEqual({ histories: 0, workflows: 1 });
+        expect(counts["a/b"]).toEqual({ histories: 0, workflows: 1 });
     });
 });

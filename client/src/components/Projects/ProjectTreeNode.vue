@@ -1,19 +1,42 @@
 <script setup lang="ts">
 import { faFolder, faFolderOpen } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { computed } from "vue";
 
-import { isWithinProject, type ProjectNode } from "./projectTags";
+import { pluralize } from "@/utils/strings";
 
-defineProps<{
+import { isWithinProject, type ProjectNode, type ProjectNodeCounts } from "./projectTags";
+
+const props = defineProps<{
     node: ProjectNode;
     selectedPath?: string;
-    /** Number of histories plus workflows tagged exactly with each path */
-    counts: Record<string, number>;
+    /** Histories and workflows in each path, subprojects included */
+    counts: Record<string, ProjectNodeCounts>;
+    /** Runs in the selected project, once they are loaded */
+    selectedRuns?: number;
 }>();
 
 const emit = defineEmits<{
     (e: "select", path: string): void;
 }>();
+
+const nodeCounts = computed(() => props.counts[props.node.path] ?? { histories: 0, workflows: 0 });
+const runs = computed(() => (props.node.path === props.selectedPath ? props.selectedRuns : undefined));
+
+function countOf(count: number, singular: string, plural?: string) {
+    return `${count} ${pluralize(count, singular, plural)}`;
+}
+
+const countsTitle = computed(() => {
+    const parts = [
+        countOf(nodeCounts.value.histories, "history", "histories"),
+        countOf(nodeCounts.value.workflows, "workflow"),
+    ];
+    if (runs.value !== undefined) {
+        parts.push(countOf(runs.value, "run"));
+    }
+    return parts.join(", ");
+});
 </script>
 
 <template>
@@ -27,7 +50,12 @@ const emit = defineEmits<{
                 :icon="selectedPath && isWithinProject(selectedPath, node.path) ? faFolderOpen : faFolder"
                 fixed-width />
             {{ node.label }}
-            <span class="text-muted small">({{ counts[node.path] ?? 0 }})</span>
+            <span class="text-muted small" :title="countsTitle" data-project-counts>
+                {{ nodeCounts.histories }} · {{ nodeCounts.workflows }}
+            </span>
+            <span v-if="runs !== undefined" class="text-muted small" :title="countsTitle" data-project-runs>
+                · {{ countOf(runs, "run") }}
+            </span>
         </button>
         <slot name="actions" :node="node" />
         <ul v-if="node.children.length" class="list-unstyled ml-3 mb-0">
@@ -37,6 +65,7 @@ const emit = defineEmits<{
                 :node="child"
                 :selected-path="selectedPath"
                 :counts="counts"
+                :selected-runs="selectedRuns"
                 @select="emit('select', $event)">
                 <template v-slot:actions="slotProps">
                     <slot name="actions" v-bind="slotProps" />

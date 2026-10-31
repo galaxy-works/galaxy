@@ -21,6 +21,7 @@ import { errorMessageAsString } from "@/utils/simple-error";
 import {
     buildProjectTree,
     countNodes,
+    countProjectItems,
     exactProjectTag,
     isWithinProject,
     projectPathsOf,
@@ -80,16 +81,9 @@ let invocationGeneration = 0;
 
 const tree = computed(() => buildProjectTree(projectPaths.value));
 
-/** Histories plus workflows tagged with exactly each path, for the tree labels. */
-const exactCounts = computed(() => {
-    const counts: Record<string, number> = {};
-    for (const paths of [...historyProjects.value.values(), ...workflowProjects.value.values()]) {
-        for (const path of paths) {
-            counts[path] = (counts[path] ?? 0) + 1;
-        }
-    }
-    return counts;
-});
+const treeCounts = computed(() =>
+    countProjectItems(tree.value, historyProjects.value.values(), workflowProjects.value.values()),
+);
 
 function inScope(paths: string[]): boolean {
     const selected = selectedPath.value;
@@ -295,7 +289,8 @@ onMounted(async () => {
                         :key="node.path"
                         :node="node"
                         :selected-path="selectedPath"
-                        :counts="exactCounts"
+                        :counts="treeCounts"
+                        :selected-runs="invocationsLoading || invocationError ? undefined : invocations.length"
                         @select="selectProject">
                         <template v-slot:actions="{ node: actionNode }">
                             <GButton

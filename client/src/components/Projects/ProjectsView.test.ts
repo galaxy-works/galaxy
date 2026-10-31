@@ -144,9 +144,31 @@ describe("ProjectsView", () => {
 
         const paths = wrapper.findAll("[data-project-path]").map((node) => node.attributes("data-project-path"));
         expect(paths).toEqual(["lung", "lung/scrna", "spatial"]);
-        expect(wrapper.find("[data-project-path='lung']").text()).toContain("(2)");
         expect(wrapper.text()).toContain("Select a project");
         expect(wrapper.findComponent({ name: "HistoryCardList" }).exists()).toBe(false);
+    });
+
+    it("counts each node's histories and workflows including its subprojects", async () => {
+        const { wrapper } = await mountView();
+
+        const counts = (path: string) => wrapper.find(`[data-project-path='${path}'] [data-project-counts]`);
+        expect(counts("lung").text()).toBe("2 · 1");
+        expect(counts("lung").attributes("title")).toBe("2 histories, 1 workflow");
+        expect(counts("lung/scrna").attributes("title")).toBe("1 history, 0 workflows");
+        expect(counts("spatial").attributes("title")).toBe("1 history, 1 workflow");
+        expect(wrapper.find("[data-project-runs]").exists()).toBe(false);
+    });
+
+    it("counts runs on the selected node only", async () => {
+        const { wrapper } = await mountView("lung");
+
+        const runs = wrapper.findAll("[data-project-runs]");
+        expect(runs).toHaveLength(1);
+        expect(runs[0]!.element.closest("[data-project-path]")!.getAttribute("data-project-path")).toBe("lung");
+        expect(runs[0]!.text()).toBe("· 2 runs");
+        expect(wrapper.find("[data-project-path='lung'] [data-project-counts]").attributes("title")).toBe(
+            "2 histories, 1 workflow, 2 runs",
+        );
     });
 
     it("shows the selected project's histories and workflows in the card lists", async () => {
