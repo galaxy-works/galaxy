@@ -48,7 +48,7 @@ describe("GridInvocation", () => {
     it("asks for every invocation of the user without a current project", async () => {
         const wrapper = await mountGrid(null);
 
-        const extraProps = wrapper.findComponent(GridList).props("extraProps");
+        const extraProps = wrapper.findComponent(GridList).props("extraProps") ?? {};
         expect(extraProps).toEqual({ user_id: "user_id" });
         expect(wrapper.find("[data-description='project scope banner']").exists()).toBe(false);
     });
@@ -56,7 +56,7 @@ describe("GridInvocation", () => {
     it("scopes to the histories inside the current project", async () => {
         const wrapper = await mountGrid("lung");
 
-        const extraProps = wrapper.findComponent(GridList).props("extraProps");
+        const extraProps = wrapper.findComponent(GridList).props("extraProps") ?? {};
         expect(extraProps.history_ids).toEqual(["h-lung", "h-scrna"]);
         expect(wrapper.find("[data-description='project scope banner']").exists()).toBe(true);
     });
@@ -64,13 +64,13 @@ describe("GridInvocation", () => {
     it("passes an empty scope when no history is in the project", async () => {
         const wrapper = await mountGrid("brain");
 
-        expect(wrapper.findComponent(GridList).props("extraProps").history_ids).toEqual([]);
+        expect(wrapper.findComponent(GridList).props("extraProps")?.history_ids).toEqual([]);
     });
 
     it("leaves a grid filtered to one history alone", async () => {
         const wrapper = await mountGrid("lung", { filteredFor: { type: "History", id: "h-other", name: "Other" } });
 
-        const extraProps = wrapper.findComponent(GridList).props("extraProps");
+        const extraProps = wrapper.findComponent(GridList).props("extraProps") ?? {};
         expect(extraProps.history_ids).toBeUndefined();
         expect(extraProps.history_id).toBe("h-other");
     });
