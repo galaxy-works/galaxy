@@ -671,7 +671,12 @@ def ready_galaxy_markdown_for_export(trans, internal_galaxy_markdown):
     # needed to render this efficiently.
     directive_handler = ReadyForExportMarkdownDirectiveHandler(trans, extra_rendering_data)
     export_markdown, export_markdown_embed_expanded = directive_handler.walk(trans, internal_galaxy_markdown)
-    export_markdown = process_invocation_ids(lambda value: trans.security.encode_id(int(value)), export_markdown)
+
+    def encode_invocation_id(value):
+        return trans.security.encode_id(int(value))
+
+    export_markdown = process_invocation_ids(encode_invocation_id, export_markdown)
+    export_markdown_embed_expanded = process_invocation_ids(encode_invocation_id, export_markdown_embed_expanded)
     return export_markdown, export_markdown_embed_expanded, extra_rendering_data
 
 

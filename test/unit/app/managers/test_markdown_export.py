@@ -493,6 +493,16 @@ I ran a cool analysis at ${galaxy instance_access_link()}.
 I ran a cool analysis at [http://mycoolgalaxy.org](http://mycoolgalaxy.org).
 """
 
+    def test_export_encodes_visualization_invocation_id(self):
+        example = """
+```visualization
+{"visualization_name": "plotly", "dataset_label": {"invocation_id": "1", "output": "table"}}
+```
+"""
+        export_markdown, export_markdown_embed_expanded, _ = self._ready_export(example)
+        assert '"invocation_id": "be8be0fd2ce547f6"' in export_markdown
+        assert '"invocation_id": "be8be0fd2ce547f6"' in export_markdown_embed_expanded
+
     def _ready_export(self, example: str):
         return ready_galaxy_markdown_for_export(self.trans, example)
 
