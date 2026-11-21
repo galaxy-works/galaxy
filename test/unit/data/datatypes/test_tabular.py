@@ -5,6 +5,7 @@ from typing import (
 )
 
 from galaxy.datatypes.tabular import (
+    CSV,
     MAX_DATA_LINES,
     Tabular,
 )
@@ -131,3 +132,14 @@ def test_tabular_display_peek_does_not_render_table_header():
     assert "<th>" not in html
     assert "<td>question_id</td>" in html
     assert "<td>curator_name</td>" in html
+
+
+def test_csv_set_meta_strips_byte_order_mark():
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8-sig") as test_file:
+        test_file.write("GeneName,A1\nGene1,5\n")
+        test_file.flush()
+        dataset = MockDataset(id=1)
+        dataset.set_file_name(test_file.name)
+        CSV().set_meta(dataset)  # type: ignore [arg-type]
+        assert dataset.metadata.column_names == ["GeneName", "A1"]
+        assert dataset.metadata.column_types == ["str", "int"]
